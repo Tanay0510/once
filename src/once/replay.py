@@ -150,7 +150,8 @@ def replay(slug: str, root: Path, rule: dict, prompt: str, commit: str = "HEAD",
            budget: float = 1.0, timeout: int = 900, keep: bool = False, progress=print,
            model: str | None = None, save: bool = True) -> dict:
     agent_cmd = agent_cmd or os.environ.get("ONCE_HEADLESS") or DEFAULT_AGENT
-    run_id = time.strftime("%Y%m%d-%H%M%S")
+    # Unique per replay: two replays in the same second must not read each other's session files.
+    run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + os.urandom(3).hex()
     base = Path(tempfile.mkdtemp(prefix="once-replay-"))
     results = {"without": [], "with": []}
     try:
