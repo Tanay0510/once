@@ -651,6 +651,12 @@ def view_session(con, sid):
         side += '<div class="box"><h3>Tags on this session</h3>' + "".join(
             f'<p><span class="chip amb">{e(n.get("tag", "").replace("_", " "))}</span> steps {n["step_from"]} to {n["step_to"]}'
             f'{" · " + e(n["note"]) if n.get("note") else ""}</p>' for n in notes) + "</div>"
+    enf = [ev for ev in evs if ev.get("event") == "rule_enforced"]
+    if enf:  # a refused call leaves no step in the timeline
+        words = {"block": "refused before it landed", "check": "sent back as an error to fix", "remind": "reminder after the edit"}
+        side += '<div class="box"><h3>Rules enforced</h3>' + "".join(
+            f'<p><span class="chip amb">{e(ev.get("level"))}</span> <span class="mono">{e(ev.get("rule_id"))}</span>: '
+            f'{e(words.get(ev.get("level"), ""))}{" · " + e(ev["path"]) if ev.get("path") else ""}</p>' for ev in enf) + "</div>"
     blockers = [ev for ev in evs if ev.get("event") == "blocker"]
     if blockers:
         side += '<div class="box"><h3>Blockers the agent recorded</h3>' + "".join(f'<p>{e(b.get("note"))}</p>' for b in blockers) + "</div>"

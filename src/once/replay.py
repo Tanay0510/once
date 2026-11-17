@@ -92,7 +92,7 @@ def one_run(root: Path, commit: str, rule_entries: list[dict] | None, prompt: st
     except FileNotFoundError:
         return {"error": f"agent command not found: {argv[0]}"}
     secs = time.time() - t0
-    cost, agent_error, tokens = None, None, None
+    cost, agent_error, tokens, denied = None, None, None, []
     try:
         j = json.loads(out)
         cost = j.get("total_cost_usd")
@@ -102,6 +102,12 @@ def one_run(root: Path, commit: str, rule_entries: list[dict] | None, prompt: st
                                                        "cache_read_input_tokens"))
         if j.get("is_error"):  # the agent started but reported a failure, e.g. a usage limit or a login problem
             agent_error = str(j.get("result") or j.get("error") or "the agent reported an error")[:400]
+        denied = [d.get("display_name") or d.get("action") for d in (j.get("denied_actions") or []) if isinstance(d, dict)]
+        if denied:  # agy in headless mode refuses shell commands its settings do not allow
+            agent_error = (f"the agent was refused {len(denied)} tool call(s) ({', '.join(sorted(set(map(str, denied))))}) "
+                           "because headless mode cannot ask for permission. For Antigravity, allow the commands the task "
+                           "needs under permissions.allow in its settings.json (for example command(pytest)), or pass "
+                           "your own command with --agent-cmd")
     except Exception:
         # Not one JSON document: Codex and others print one JSON event per line.
         from .adapters import codex as _codex
@@ -137,7 +143,7 @@ def one_run(root: Path, commit: str, rule_entries: list[dict] | None, prompt: st
     else:
         hits, present = len(failed), (verified is False) if check else len(failed) > 0
     got_rule = any(e.get("event") == "rule_injected" for e in events)
-    return {"agent_exit": rc, "agent_error": agent_error, "seconds": round(secs, 1), "cost_usd": cost, "tokens": tokens,
+    return {"agent_exit": rc, "agent_error": agent_error, "refused": bool(denied), "seconds": round(secs, 1), "cost_usd": cost, "tokens": tokens,
             "verified": verified,
             "failed_steps": len(failed), "signature_hits": hits, "failure_present": present,
             "steps": sum(1 for e in events if e.get("event") == "tool_result"), "rule_delivered": got_rule,
@@ -163,8 +169,9 @@ def replay(slug: str, root: Path, rule: dict, prompt: str, commit: str = "HEAD",
                               model=model)
                 if "error" in res:
                     return {"verdict": "error", "error": res["error"]}
-                if res.get("agent_error") and res["steps"] == 0:
-                    return {"verdict": "error", "error": f"the agent did no work: {res['agent_error']}"}
+                if res.get("agent_error") and (res["steps"] == 0 or res.get("refused")):
+                    # a refused run measures the permission setting, not the rule
+                    return {"verdict": "error", "error": f"the agent could not do the task: {res['agent_error']}"}
                 results[arm].append(res)
                 state = "failure seen" if res["failure_present"] else "clean"
                 progress(f"                       {state}, {res['steps']} steps, {res['seconds']}s"

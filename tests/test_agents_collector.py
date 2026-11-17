@@ -132,7 +132,7 @@ def test_collector_end_to_end_and_private(env, tmp_path, capsys):
         s = body["sessions"][0]
         assert s["flags"] == {"retry_cluster": 1} and s["folders"] == ["crates/auth/src/"] and s["sid"] != "k1"
         capsys.readouterr()
-        assert cli.main(["collector", "push"]) == 0 and "Sent 1 sessions" in capsys.readouterr().out
+        assert cli.main(["collector", "push"]) == 0 and "Sent 1 session," in capsys.readouterr().out
         assert collector.payload()["sessions"] == []  # nothing new to send
         assert cli.main(["collector", "push"]) == 0
         sm = collector._call("GET", "/v1/summary")

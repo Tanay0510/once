@@ -33,6 +33,21 @@ def _entropy(s: str) -> float:
     return -sum(c / n * math.log2(c / n) for c in counts.values())
 
 
+_NAMELIKE = re.compile(r"[A-Z]?[a-z0-9.]*|[a-z]+(?:[A-Z][a-z0-9]+)+|[A-Za-z0-9.]*[-_][A-Za-z0-9._-]*"
+                       r"|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}.*")
+
+
+def _pathlike(tok: str, before: str = "") -> bool:
+    """A file path, not a base64 secret that happens to contain '/': at least two thirds of its segments read
+    like names (lower case, a capitalised word, camelCase, or words joined by '-' or '_'). Base64 scatters
+    capitals and digits through every segment, so a key with slashes in it still counts as one token."""
+    if tok.count("/") < 2:
+        return False
+    segs = [s for s in tok.split("/") if s]
+    named = sum(1 for s in segs if _NAMELIKE.fullmatch(s))
+    return named * 3 >= len(segs) * 2
+
+
 def redact_text(s: str) -> tuple[str, int]:
     n = 0
     for p in _PATTERNS:
@@ -46,13 +61,26 @@ def redact_text(s: str) -> tuple[str, int]:
 
     s = _KV.sub(kv, s)
 
+    def secretish(tok: str) -> bool:
+        # long, mixed, high-entropy strings; not hex digests of commits (40 hex), sha256 or UUIDs
+        if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", tok, re.I):
+            return False
+        return _entropy(tok) >= 4.2 and bool(re.search(r"[0-9]", tok)) and bool(re.search(r"[A-Za-z]", tok))
+
     def ent(m):
         nonlocal n
         tok = m.group(0)
-        # long, mixed, high-entropy strings; skip hex digests of commits (40 hex) and paths
-        if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", tok):
-            return tok
-        if _entropy(tok) >= 4.2 and re.search(r"[0-9]", tok) and re.search(r"[A-Za-z]", tok):
+        if _pathlike(tok, m.string[m.start() - 1] if m.start() else ""):
+            # A path is judged one segment at a time, so the folders around a secret are kept. Masking the
+            # whole path lost the session's working folder whenever it held a UUID or a temp-folder name.
+            segs = tok.split("/")
+            hit = False
+            for i, sg in enumerate(segs):
+                if len(sg) >= 32 and secretish(sg):
+                    segs[i], hit = MASK, True
+            n += hit
+            return "/".join(segs)
+        if secretish(tok):
             n += 1
             return MASK
         return tok

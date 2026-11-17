@@ -8,6 +8,20 @@ from . import detectors, paths
 
 def connect() -> sqlite3.Connection:
     paths.local().mkdir(parents=True, exist_ok=True)
+    try:
+        return _open()
+    except sqlite3.DatabaseError:
+        # The database is only a view of the session files: a corrupt one is set aside and rebuilt from them.
+        bad = paths.db()
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        for suffix in ("", "-wal", "-shm"):
+            f = bad.with_name(bad.name + suffix)
+            if f.exists():
+                f.rename(f.with_name(f"{f.name}.corrupt-{stamp}"))
+        return _open()
+
+
+def _open() -> sqlite3.Connection:
     con = sqlite3.connect(paths.db(), timeout=10)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
@@ -55,17 +69,25 @@ def sync(con: sqlite3.Connection | None = None) -> int:
                 except Exception:
                     lines += 1
                     continue
+                if not isinstance(e, dict):
+                    lines += 1
+                    continue
                 e["seq"] = lines
+                txt = lambda v: v if v is None or isinstance(v, str) else json.dumps(v)  # never let one odd line stop the sync
+                ts = e.get("ts") if isinstance(e.get("ts"), (int, float)) else None
                 con.execute("INSERT OR REPLACE INTO events VALUES(?,?,?,?,?,?,?,?)",
-                            (e.get("session_id"), lines, e.get("ts"), e.get("event"), e.get("tool"),
-                             e.get("target"), None if e.get("ok") is None else int(bool(e["ok"])),
+                            (txt(e.get("session_id")) or f.stem, lines, ts, txt(e.get("event")), txt(e.get("tool")),
+                             txt(e.get("target")), None if e.get("ok") is None else int(bool(e["ok"])),
                              json.dumps(e)))
-                touched.add(e.get("session_id"))
+                touched.add(txt(e.get("session_id")) or f.stem)
                 lines += 1
                 added += 1
             con.execute("INSERT OR REPLACE INTO files VALUES(?,?,?)", (str(f), offset + end + 1, lines))
     for sid in touched:
-        _refresh_session(con, sid)
+        try:
+            _refresh_session(con, sid)
+        except Exception:  # one odd session must not stop the others from being indexed
+            pass
     con.commit()
     if own:
         con.close()
@@ -85,10 +107,13 @@ def _refresh_session(con, sid: str):
     prompt = next((e.get("prompt") for e in evs if e.get("event") == "user_prompt"), None)
     flags = detectors.detect(evs)
     given = {rid for e in evs if e.get("event") == "rule_injected" for rid in e.get("rule_ids", [])}
+    # Headless Claude Code sends no model at session start; the usage read at the end names it.
+    model = start.get("model") or next((m for e in evs if e.get("event") == "session_end"
+                                        for m in ((e.get("usage") or {}).get("models") or [])[:1]), None)
     con.execute("""INSERT OR REPLACE INTO sessions
         (id, repo, agent, model, cwd, commit_sha, started, last_event, ended, prompt, steps, flags, tags, rules_given, held_out)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (sid, start.get("repo"), start.get("agent"), start.get("model"), start.get("cwd"), start.get("commit"),
+        (sid, start.get("repo"), start.get("agent"), model, start.get("cwd"), start.get("commit"),
          evs[0].get("ts"), evs[-1].get("ts"), int(any(e.get("event") == "session_end" for e in evs)),
          prompt, len(detectors.steps(evs)), len(flags),
          len(detectors.annotations(evs)), len(given),

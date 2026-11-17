@@ -16,6 +16,7 @@ Differences from Claude Code that shape this adapter:
 """
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -29,10 +30,12 @@ EVENTS = ("SessionStart", "PreInvocation", "PreToolUse", "PostToolUse", "Stop")
 MATCHED = ("PreToolUse", "PostToolUse")  # the events that take a matcher
 HEADLESS = "agy --output-format json --mode accept-edits -p {prompt}"
 
-TOOL_KIND = {"run_command": "shell", "view_file": "read", "write_to_file": "edit", "replace_file_content": "edit",
-             "multi_replace_file_content": "edit", "list_dir": "search", "find_by_name": "search",
-             "grep_search": "search", "search_web": "web", "read_url_content": "web",
-             "invoke_subagent": "subagent"}
+# Names seen in live agy 1.5.7 payloads (read_file, edit_file, write_file, ...) and the ones its docs use.
+TOOL_KIND = {"run_command": "shell", "read_file": "read", "view_file": "read", "edit_file": "edit", "write_file": "edit",
+             "create_file": "edit", "write_to_file": "edit", "replace_file_content": "edit",
+             "multi_replace_file_content": "edit", "list_dir": "search", "list_directory": "search",
+             "find_by_name": "search", "find_files": "search", "grep_search": "search", "grep": "search",
+             "search_web": "web", "read_url_content": "web", "invoke_subagent": "subagent"}
 
 CAPABILITIES = {"inject_at_start": True, "inject_on_path": False, "native_path_rules": True,
                 "reinject_each_turn": True, "sees_edit_tools": True, "async_hooks": False, "headless": True,
@@ -50,7 +53,7 @@ def normalize(raw: dict, event: str | None) -> dict:
             "cwd": ws[0] if ws else os.getcwd(), "transcript_path": raw.get("transcriptPath"),
             "model": raw.get("modelName"), "prompt": raw.get("lastUserInput") or "",
             "tool_name": (tc or {}).get("name"), "tool_input": (tc or {}).get("args") or {},
-            "error": raw.get("error") or "", "has_tool": tc is not None,
+            "error": raw.get("error") or "", "has_tool": tc is not None, "step_idx": raw.get("stepIdx"),
             "reason": raw.get("terminationReason"), "fully_idle": raw.get("fullyIdle")}
 
 
@@ -76,19 +79,48 @@ def parse(raw: dict, root: str | None) -> list[dict]:
         cmd = args.get("CommandLine") or args.get("commandLine") or args.get("command") or ""
         rel = _cc._rel(_path_arg(args), root)
         target = cmd or rel or args.get("Query") or args.get("query") or args.get("Pattern") or tool
-        failed = bool(raw.get("error"))
+        err = str(raw.get("error") or "")
+        if kind == "shell" and not err:
+            # agy's PostToolUse says nothing about a command's exit code; its transcript does, at this step.
+            res = command_result(raw.get("transcript_path"), raw.get("step_idx"))
+            if res and res[0] != 0:
+                err = f"exit code {res[0]}\n{res[1]}"
+        failed = bool(err)
         ev = {"event": "tool_result", "tool": kind, "tool_name": tool, "target": str(target)[:300],
               "paths": [rel] if rel else [], "ok": not failed}
         if kind == "shell":
             ev["command"] = str(cmd)[:500]
             ev["paths"], ev["writes"] = _cc.shell_paths(str(cmd), root)
         if failed:
-            ev["error_digest"], ev["error_head"] = _cc._digest(str(raw["error"]))
-            ev["error"] = str(raw["error"])[-600:]
+            ev["error_digest"], ev["error_head"] = _cc._digest(err)
+            ev["error"] = err[-600:]
         return [ev]
     if name == "Stop":
         return [{"event": "turn_end", "reason": raw.get("reason"), "fully_idle": raw.get("fully_idle")}]
     return []
+
+
+_EXITED = re.compile(r"Command exited with code (-?\d+)\.?\s*(?:Command output:\s*)?(.*)", re.S)
+
+
+def command_result(transcript_path, step_idx, tail: int = 262_144) -> tuple[int, str] | None:
+    """(exit code, output) of the command whose result is transcript step `step_idx`. Reads only the end of the
+    transcript, so the hook stays fast however long the conversation gets."""
+    if not transcript_path or step_idx is None or not os.path.isfile(transcript_path):
+        return None
+    try:
+        with open(transcript_path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - tail))
+            lines = f.read().decode(errors="ignore").splitlines()
+        for line in reversed(lines):
+            if f'"step_index": {int(step_idx)},' not in line and f'"step_index":{int(step_idx)},' not in line:
+                continue
+            m = _EXITED.search(str(json.loads(line).get("content") or ""))
+            return (int(m.group(1)), m.group(2).strip()[-600:]) if m else None
+    except Exception:
+        return None
+    return None
 
 
 def reply(event_name: str, context: str) -> str:
@@ -120,7 +152,8 @@ def edit_text(raw: dict) -> str:
     cmd = args.get("CommandLine") or args.get("commandLine") or args.get("command")
     if cmd:
         return str(cmd)
-    parts = [args.get(k) for k in ("CodeContent", "codeContent", "ReplacementContent", "replacementContent", "content")]
+    parts = [args.get(k) for k in ("CodeContent", "codeContent", "ReplacementContent", "replacementContent", "content",
+                                    "Replacement", "Content", "Contents")]
     for chunk in args.get("ReplacementChunks") or args.get("replacementChunks") or []:
         if isinstance(chunk, dict):
             parts.append(chunk.get("ReplacementContent") or chunk.get("replacementContent"))

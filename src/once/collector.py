@@ -422,7 +422,8 @@ def cli(a, say, nxt) -> int:
             say(f"Would send {w['sessions']} sessions, {w['rules']} rules, {w['decisions']} review decisions. One session as sent:")
             say(json.dumps(res["sample"][0] if res["sample"] else {}, indent=2))
         else:
-            say(f"Sent {res.get('sessions', 0)} sessions, {res.get('rules', 0)} rules, {res.get('decisions', 0)} decisions.")
+            n = lambda k, w: f"{res.get(k, 0)} {w}{'' if res.get(k, 0) == 1 else 's'}"
+            say(f"Sent {n('sessions', 'session')}, {n('rules', 'rule')}, {n('decisions', 'review decision')}.")
         return 0
     if act == "team":
         try:

@@ -89,6 +89,7 @@ def _refresh(slug, root=None):
     """Rebuild the index, native rule files and skills. Runs after every change; nobody types it."""
     from . import playbooks
     root = root or repo.known_root(slug)
+    root = Path(root) if root else None
     if root:
         repo.remember_root(slug, root)  # first, so the index includes the rules committed to the repo
     n = rules.compile_index(slug)
@@ -124,7 +125,9 @@ def _connected() -> list[str]:
     out = []
     for name in adapters.IMPLEMENTED:
         try:
-            if all(adapters.get(name).installed().values()):
+            # Connected means sessions are captured; the enforcement group is optional and doctor names it.
+            inst = adapters.get(name).installed()
+            if all(ok for ev, ok in inst.items() if "(" not in ev):
                 out.append(name)
         except Exception:
             pass
@@ -427,6 +430,12 @@ def cmd_last(a):
              f"{u['output_tokens']:,} out, {u['model_calls']} model calls")
     if given:
         _say(f"Rules given: {', '.join(dict.fromkeys(given))}")
+    enf = [e for e in evs if e.get("event") == "rule_enforced"]
+    if enf:  # a refused call leaves no step behind, so say it here
+        words = {"block": "refused before it landed", "check": "sent back as an error to fix", "remind": "reminded after"}
+        for e in enf:
+            _say(f"Enforced: {e.get('rule_id')} ({e.get('level')}): an edit or command {words.get(e.get('level'), 'enforced')}"
+                 + (f", {e['path']}" if e.get("path") else ""))
     for n in notes:
         _say(f"Tagged {n.get('step_from')}-{n.get('step_to')}: {n.get('tag')}" + (f" - {n['note']}" if n.get("note") else ""))
     if flags:
@@ -841,7 +850,7 @@ def _rules_promote(a, slug, root):
     _refresh(slug, root)
     store.log_action(store.connect(), "promote", {"slug": slug, "id": r["id"], "from": cur, "to": to,
                                                   "root": str(root) if root else None})
-    _say(f"\nDone. Agents that support it (Claude Code) enforce it from their next edit. Undo: {BIN} undo")
+    _say(f"\nDone. Claude Code, Codex and Antigravity enforce it from their next edit. Undo: {BIN} undo")
     return 0
 
 
@@ -1035,6 +1044,9 @@ def health(slug: str, timing: bool = True) -> list[tuple[str, bool, str]]:
     newest = max((Path(r["_file"]).stat().st_mtime for r in rules.load_all(slug)), default=0)
     fresh = idx_f.exists() and idx_f.stat().st_mtime >= newest
     checks.append(("rule index", fresh, "up to date" if fresh else "stale"))
+    broken = [Path(r["_file"]).name for r in rules.load_all(slug) if "_error" in r]
+    checks.append(("rule files", not broken, f"cannot read {', '.join(broken[:3])}: fix or delete" if broken
+                   else "all readable"))
     errs = paths.error_log().read_text().splitlines() if paths.error_log().exists() else []
     checks.append(("hook errors", not errs, f"{len(errs)} logged; last: {errs[-1][:90]}" if errs else "none"))
     con = store.connect()
@@ -2453,6 +2465,9 @@ def build_parser():
     return p
 
 
+JSON_EXEMPT = {"completion", "_complete", "menubar", "statusline", "ui", "_capture"}
+
+
 def main(argv=None) -> int:
     p = build_parser()
     a, extra = p.parse_known_args(argv)
@@ -2480,12 +2495,45 @@ def main(argv=None) -> int:
     real_out = sys.stdout
     if a.quiet and not a.json:
         sys.stdout = open(os.devnull, "w")
+    # --json is a promise for every command: what a command prints as prose is wrapped as {"ok", "exit", "message"}.
+    # Not for output other tools read as text, nor for servers that never return.
+    wrap = a.json and a.cmd not in JSON_EXEMPT and not (a.cmd == "collector" and getattr(a, "action", None) == "serve")
+    if wrap:
+        import io
+        sys.stdout = io.StringIO()
     try:
         rc = table[a.cmd](a) or 0
+        if wrap:
+            text, sys.stdout = sys.stdout.getvalue(), real_out
+            try:
+                json.loads(text)
+                sys.stdout.write(text)
+            except ValueError:
+                print(json.dumps({"ok": rc == 0, "exit": rc, "message": text.strip()}))
         sys.stdout.flush()
         return rc
     except KeyboardInterrupt:
         return 130
+    except PermissionError as ex:
+        sys.stdout = real_out
+        print(f"{BIN}: could not write {getattr(ex, 'filename', None) or 'a file'}: permission denied.\n"
+              f"Fix: make that folder writable again (for example  chmod -R u+w {paths.home()}), then retry.",
+              file=sys.stderr)
+        return 1
+    except Exception as ex:  # one clear line instead of a traceback; the details go to a log
+        sys.stdout = real_out
+        if os.environ.get("ONCE_DEBUG"):
+            raise
+        import traceback
+        try:
+            paths.local().mkdir(parents=True, exist_ok=True)
+            with open(paths.local() / "cli-errors.log", "a") as f:
+                f.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')} once {' '.join(argv or sys.argv[1:])}\n{traceback.format_exc()}")
+        except Exception:
+            pass
+        print(f"{BIN} {a.cmd or ''}: {type(ex).__name__}: {ex}\nThe details are in {paths.local() / 'cli-errors.log'}. "
+              f"Run  {BIN} doctor  to check the install; ONCE_DEBUG=1 shows the full error.", file=sys.stderr)
+        return 1
     except BrokenPipeError:  # output piped into head, less, etc.
         try:
             sys.stdout = open(os.devnull, "w")
@@ -2493,8 +2541,11 @@ def main(argv=None) -> int:
             pass
         return 0
     finally:
-        if a.quiet and not a.json and sys.stdout is not real_out:
-            sys.stdout.close()
+        if sys.stdout is not real_out:  # --quiet's devnull, or --json's buffer after an error
+            try:
+                sys.stdout.close()
+            except Exception:
+                pass
             sys.stdout = real_out
 
 

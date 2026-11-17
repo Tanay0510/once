@@ -46,6 +46,17 @@ Path-scoped rules become Antigravity glob rules in `.agents/rules/once-*.md`; pl
 `.agents/skills/once-*/`, which Codex reads too. Both are kept out of git through `.git/info/exclude`. After
 upgrading, run `once init` again; Codex asks you to trust its hooks again in `/hooks` because the matcher changed.
 
+**Antigravity in headless mode** (lab runs, replay) refuses shell commands and MCP calls it cannot ask you
+about. Allow what the tasks need in its settings, for example
+`{"permissions": {"allow": ["command(pytest)", "command(make)", "mcp(once/list_rules)"]}}`. A replay whose
+agent was refused stops and says so, instead of counting a run that measured the permission setting.
+Antigravity's PostToolUse carries no exit code, so once reads it from the agent's own transcript.
+
+**When something looks wrong.** `ONCE_DEBUG_PAYLOADS=/tmp/payloads.jsonl` records every raw hook payload,
+secrets masked, which shows at once whether an agent update renamed a tool or a field. CLI errors print one line;
+the details go to `~/.once/local/cli-errors.log` (`ONCE_DEBUG=1` shows them instead). A damaged index database is
+set aside and rebuilt from the session files by itself.
+
 **The central collector.** One small server for a team: `once collector serve` (or the `once-collector` container),
 then each developer runs `once collector connect <url> --token <t>`. After every session a summary goes to it in
 the background: counts, flags by detector, the folders flagged steps touched, rule ids and wording, outcomes,
@@ -236,7 +247,7 @@ pull request you review.
 
 ```bash
 uv sync                  # Python 3.10 or newer, pytest included
-uv run pytest -q         # 81 tests, about a minute
+uv run pytest -q         # 93 tests, about a minute and a half
 uv run once demo         # the loop end to end
 ```
 
@@ -287,7 +298,7 @@ src/once/
   demo.py              `once demo`, with a scripted agent and drafter in demo_assets/
   collector.py         the team's central collector: server, client and team dashboard
   cli.py               the commands
-tests/                 81 tests, including full simulated sessions through the real hook
+tests/                 93 tests, including full simulated sessions through the real hook
 ```
 
 ## Known gaps

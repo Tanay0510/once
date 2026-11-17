@@ -12,7 +12,9 @@ import time
 
 
 def _append(slug: str, session_id: str, ev: dict):
-    from . import paths
+    """The one place session events reach disk, so every writer (hook, `once tag`, the MCP server) is masked."""
+    from . import paths, redact
+    ev, _ = redact.redact(ev)
     d = paths.trajectories(slug)
     d.mkdir(parents=True, exist_ok=True)
     line = (json.dumps(ev, separators=(",", ":")) + "\n").encode()
@@ -227,6 +229,13 @@ def handle(raw: dict, agent: str, event: str | None = None) -> str:
     if event == "enforce":
         return _enforce_post(raw, agent)
     raw = adapter.normalize(raw, event)
+    # An agent update can send odd types; a session id that is not a short string must never reach a file name
+    # or the index, where one bad line used to break every later command.
+    for k in ("session_id", "hook_event_name", "cwd"):
+        v = raw.get(k)
+        if v is not None and not isinstance(v, str):
+            raw[k] = "" if isinstance(v, (dict, list)) else str(v)
+    raw["session_id"] = (raw.get("session_id") or "")[:200]
     name = raw.get("hook_event_name", "")
     sid = raw.get("session_id") or ""
     state = None if name == "SessionStart" else _load_state(sid)
@@ -320,8 +329,10 @@ def handle(raw: dict, agent: str, event: str | None = None) -> str:
             if ev["event"] == "user_prompt" and ev.get("prompt"):
                 from . import ambient
                 if ambient.is_correction(ev["prompt"]):
-                    events.append({"event": "correction_noted", "text": ev["prompt"][:500]})
-                    _spawn(["_capture", "--session", state["session_id"], "--agent", agent, "--text", ev["prompt"][:500]],
+                    from . import redact
+                    said = redact.redact_text(ev["prompt"][:500])[0]  # masked before it becomes a rule or a process argument
+                    events.append({"event": "correction_noted", "text": said})
+                    _spawn(["_capture", "--session", state["session_id"], "--agent", agent, "--text", said],
                            state.get("root") or state.get("cwd"))
 
     if adapter.CAPABILITIES.get("reinject_each_turn") and name == adapter.INJECT_EVENT \
@@ -463,6 +474,15 @@ def main(argv=None) -> int:
         raw = json.loads(data) if data.strip() else {}
         if not isinstance(raw, dict):
             raw = {}
+        if os.environ.get("ONCE_DEBUG_PAYLOADS"):
+            # Raw payloads, secrets masked, to check an agent's real field and tool names after an update.
+            try:
+                from . import redact
+                clean, _ = redact.redact(raw)
+                with open(os.environ["ONCE_DEBUG_PAYLOADS"], "a") as f:
+                    f.write(json.dumps({"agent": agent, "event": event, "raw": clean}) + "\n")
+            except Exception:
+                pass
         out = handle(raw, agent, event) if raw else _fallback(agent, event)
         if out:
             sys.stdout.write(out)
