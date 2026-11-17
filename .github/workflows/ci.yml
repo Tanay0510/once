@@ -15,18 +15,43 @@ concurrency:
 
 jobs:
   test:
-    name: test (${{ matrix.os }}, py${{ matrix.python }})
-    runs-on: ${{ matrix.os }}
+    name: test (linux, py${{ matrix.python }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
         python: ["3.10", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python }}
+          enable-cache: true
+      - name: git identity for the tests' throwaway repos
+        run: |
+          git config --global user.name "once CI"
+          git config --global user.email "ci@localhost"
+          git config --global init.defaultBranch main
+      - name: Install
+        run: uv sync --locked
+      - name: Tests
+        run: uv run pytest -q
+      - name: Demo runs end to end
+        run: uv run once demo --json
+
+  # macOS minutes cost 10x on private repos and runners can queue for a long time, so: one Python, only on
+  # pushes to main or when started by hand, never blocking. Linux above is the gate for pull requests.
+  test-macos:
+    name: test (macos, py3.12)
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
           enable-cache: true
       - name: git identity for the tests' throwaway repos
         run: |
