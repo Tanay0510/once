@@ -1,0 +1,81 @@
+name: Release
+
+# Push a tag like v0.8.0 to release. The tag must match the version in pyproject.toml.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Tag matches the package version
+        run: |
+          v=$(uv run python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME but pyproject says $v"; exit 1; }
+      - name: Tests
+        run: |
+          git config --global user.name "once CI" && git config --global user.email "ci@localhost"
+          uv sync --locked && uv run pytest -q
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Create the GitHub release with the wheel and sdist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+
+  pypi:
+    # Off until PyPI trusted publishing is set up for this repo: set the repository variable PUBLISH_PYPI to true.
+    if: vars.PUBLISH_PYPI == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  collector-image:
+    # The team collector as a container on GitHub's registry: ghcr.io/<owner>/once-collector
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and push
+        run: |
+          image=ghcr.io/$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')/once-collector
+          docker build -f Dockerfile.collector -t "$image:${GITHUB_REF_NAME#v}" -t "$image:latest" .
+          docker push --all-tags "$image"

@@ -1,0 +1,32 @@
+{
+  "name": "once",
+  "displayName": "once: your coding agent makes each mistake once",
+  "description": "See what your coding agent did, and review suggested rules, without leaving the editor.",
+  "version": "0.8.0",
+  "publisher": "once",
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "once.openDashboard", "title": "once: Open dashboard" },
+      { "command": "once.review", "title": "once: Review suggested rules" },
+      { "command": "once.last", "title": "once: Show the last session" }
+    ],
+    "viewsContainers": {
+      "activitybar": [ { "id": "once", "title": "once", "icon": "icon.svg" } ]
+    },
+    "views": {
+      "once": [ { "type": "webview", "id": "once.sidebar", "name": "Sessions" } ]
+    },
+    "configuration": {
+      "title": "once",
+      "properties": {
+        "once.command": { "type": "string", "default": "once", "description": "The command that runs once, if it is not on PATH." },
+        "once.port": { "type": "number", "default": 4317, "description": "Port of the local dashboard." }
+      }
+    }
+  }
+}

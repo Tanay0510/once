@@ -1,0 +1,12 @@
+# The team's central collector. Run behind TLS (a reverse proxy); data lives in the /data volume.
+#   docker run -p 4400:4400 -v once-data:/data -e ONCE_COLLECTOR_TOKEN=... ghcr.io/<owner>/once-collector
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 once
+COPY . /src
+RUN pip install --no-cache-dir /src && rm -rf /src
+USER once
+VOLUME /data
+EXPOSE 4400
+HEALTHCHECK CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:4400/healthz',timeout=3)"
+ENTRYPOINT ["once", "collector", "serve", "--host", "0.0.0.0", "--port", "4400", "--data", "/data"]
