@@ -248,3 +248,16 @@ def link(slug: str, sid: str, evs: list[dict], started: float | None, prs: list[
     if own:
         return by_url.get(own[-1].lower()) or from_url(own[-1]), "tool output"
     return None, ""
+
+
+def links(slug: str, sid: str, evs: list[dict], started: float | None, prs: list[dict], root=None,
+          by_hand: dict | None = None) -> list[tuple[dict, str]]:
+    """Every PR this session led to: a long session can create several. Falls back to the single best link."""
+    by_hand = manual() if by_hand is None else by_hand
+    if sid not in by_hand:
+        created = session_signals(evs)["created"]
+        if len(created) > 1:
+            by_url = {p["url"].lower(): p for p in prs if p.get("url")}
+            return [(by_url.get(u.lower()) or from_url(u), "gh pr create") for u in created]
+    pr, how = link(slug, sid, evs, started, prs, root, by_hand)
+    return [(pr, how)] if pr else []
