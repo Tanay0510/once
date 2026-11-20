@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Tanay0510/once/main/docs/img/banner-light.png">
-    <img alt="once: your coding agent makes each mistake once" src="https://raw.githubusercontent.com/Tanay0510/once/main/docs/img/banner-dark.png" width="900">
+    <source media="(prefers-color-scheme: light)" srcset="docs/img/banner-light.png">
+    <img alt="once: your coding agent makes each mistake once" src="docs/img/banner-dark.png" width="900">
   </picture>
 </p>
 
@@ -9,7 +9,7 @@
   <a href="https://pypi.org/project/once/"><img alt="PyPI" src="https://img.shields.io/pypi/v/once?color=E9A23B&label=pypi"></a>
   <a href="https://pypi.org/project/once/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/once?color=555"></a>
   <a href="https://github.com/Tanay0510/once/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Tanay0510/once/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/Tanay0510/once/blob/main/LICENSE"><img alt="License: BSL 1.1" src="https://img.shields.io/badge/license-BSL%201.1-555"></a>
+  <a href="LICENSE"><img alt="License: BSL 1.1" src="https://img.shields.io/badge/license-BSL%201.1-555"></a>
   <img alt="Works with Claude Code, Codex and Antigravity" src="https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Antigravity-7FD6A4">
 </p>
 
@@ -17,8 +17,8 @@
   <a href="#install">Install</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#see-it">See it</a> ·
-  <a href="https://github.com/Tanay0510/once/blob/main/docs/guide.md">Guide</a> ·
-  <a href="https://github.com/Tanay0510/once/blob/main/CHANGELOG.md">Changelog</a>
+  <a href="docs/guide.md">Guide</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 ---
@@ -52,8 +52,8 @@ That's the setup. Keep working as usual. Python 3.10 or newer, macOS or Linux.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Tanay0510/once/main/docs/img/how-it-works-light.png">
-    <img alt="Capture, flag, suggest, replay, give back; every session feeds the next" src="https://raw.githubusercontent.com/Tanay0510/once/main/docs/img/how-it-works-dark.png" width="900">
+    <source media="(prefers-color-scheme: light)" srcset="docs/img/how-it-works-light.png">
+    <img alt="Capture, flag, suggest, replay, give back; every session feeds the next" src="docs/img/how-it-works-dark.png" width="900">
   </picture>
 </p>
 
@@ -77,15 +77,15 @@ That's the setup. Keep working as usual. Python 3.10 or newer, macOS or Linux.
 
 <table>
   <tr>
-    <td width="50%"><img alt="A session timeline with a retry cluster boxed in red" src="https://raw.githubusercontent.com/Tanay0510/once/main/docs/img/session.png"></td>
-    <td width="50%"><img alt="Conversations across Claude Code, Codex and Antigravity" src="https://raw.githubusercontent.com/Tanay0510/once/main/docs/img/conversations.png"></td>
+    <td width="50%"><img alt="A session timeline with a retry cluster boxed in red" src="docs/img/session.png"></td>
+    <td width="50%"><img alt="Conversations across Claude Code, Codex and Antigravity" src="docs/img/conversations.png"></td>
   </tr>
   <tr>
     <td><b>Sessions.</b> Every step of every session. Wasted steps are boxed in red. Tag them, or turn one into a rule in a click.</td>
     <td><b>Conversations.</b> What you and each agent said, in one searchable place, with flags and corrections pinned where they happened.</td>
   </tr>
   <tr>
-    <td colspan="2"><img alt="Pull requests with the sessions behind each one" src="https://raw.githubusercontent.com/Tanay0510/once/main/docs/img/pull-requests.png"></td>
+    <td colspan="2"><img alt="Pull requests with the sessions behind each one" src="docs/img/pull-requests.png"></td>
   </tr>
   <tr>
     <td colspan="2"><b>Pull requests.</b> The PRs your agents worked on, the sessions behind each one, and how each was linked. Also: whether sessions given rules ship more often than sessions without.</td>
@@ -146,19 +146,19 @@ once never gets in your agent's way: if anything inside it fails, the agent carr
 - Codex: recording and conversations.
 
 Still being proven: Codex enforcement, the learning loop at scale, and a measured improvement on held-out tasks.
-The [changelog](https://github.com/Tanay0510/once/blob/main/CHANGELOG.md) keeps an honest list.
+The [changelog](CHANGELOG.md) keeps an honest list.
 
 ## Learn more
 
-- **[The guide](https://github.com/Tanay0510/once/blob/main/docs/guide.md):** every feature and setting.
-- **[Changelog and details](https://github.com/Tanay0510/once/blob/main/CHANGELOG.md):** release history and
+- **[The guide](docs/guide.md):** every feature and setting.
+- **[Changelog and details](CHANGELOG.md):** release history and
   known gaps.
-- **[AGENTS.md](https://github.com/Tanay0510/once/blob/main/AGENTS.md):** how the code is laid out, for people
+- **[AGENTS.md](AGENTS.md):** how the code is laid out, for people
   and agents working on it.
 
 ## License
 
-[Business Source License 1.1](https://github.com/Tanay0510/once/blob/main/LICENSE).
+[Business Source License 1.1](LICENSE).
 
 - **Free to use, including at work and on commercial code:** with your own agents, on your own or your employer's
   repositories, and for your team.
