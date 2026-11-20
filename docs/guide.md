@@ -23,7 +23,7 @@ on your machine unless you connect a team collector.
 ## Install
 
 ```bash
-uv tool install .          # from a checkout; or: pipx install .
+uv tool install once       # or: pipx install once
 cd <a git repo you use with an agent>
 once init                  # shows what it will change, then installs on one confirmation
 once demo                  # optional: the whole loop on a toy repo, touching nothing of yours
@@ -163,11 +163,10 @@ tasks need in its settings, for example `{"permissions": {"allow": ["command(pyt
       steps:
         - uses: actions/checkout@v4
           with: {fetch-depth: 0}          # it reads history
-        - uses: Tanay0510/once@v0.8.1     # comments only when it finds something; one comment, updated
+        - uses: Tanay0510/once@v0.9.0     # comments only when it finds something; one comment, updated
   ```
 
-  While the once repository is private, other repositories cannot use the action; it runs on once's own pull
-  requests (`.github/workflows/pr-check.yml`).
+  It installs once from PyPI at the action's version.
 
 ## Privacy
 

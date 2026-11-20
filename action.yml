@@ -9,9 +9,9 @@ branding:
 inputs:
   install:
     description: >-
-      What to install once from: a pip requirement. The default installs the release this action is tagged
-      with, from this repository.
-    default: "git+https://github.com/Tanay0510/once@${{ github.action_ref }}"
+      What to install once from: a pip requirement. Empty (the default) installs from PyPI the release this action
+      is tagged with (uses: Tanay0510/once@v0.9.0 installs once==0.9.0), or the newest when not on a version tag.
+    default: ""
   post:
     description: >-
       found: comment only when a file looks missed or a rule applies (the default, so clean pull requests stay
@@ -27,7 +27,14 @@ runs:
     - uses: astral-sh/setup-uv@v5
     - name: Install once
       shell: bash
-      run: uv tool install --quiet "${{ inputs.install }}"
+      env:
+        SPEC: ${{ inputs.install }}
+        REF: ${{ github.action_ref }}
+      run: |
+        if [ -z "$SPEC" ]; then
+          case "$REF" in v[0-9]*) SPEC="once==${REF#v}" ;; *) SPEC="once" ;; esac
+        fi
+        uv tool install --quiet "$SPEC"
     - name: Check the pull request
       shell: bash
       env:
