@@ -191,7 +191,7 @@ Directives are at most 400 characters. Lint refuses URLs and prompt-injection ph
 | Check / remind | sync PostToolUse `decision: block` | inline PostToolUse | deferred to the next PreInvocation |
 | MCP | `claude mcp add` | `codex mcp add` | `mcp_config.json` |
 | Transcript | `~/.claude/projects/*/<id>.jsonl` | rollout `.jsonl` (event_msg + response_item) | `~/.gemini/*/brain/<id>/.system_generated/logs/transcript_full.jsonl` |
-| Live-verified | yes | **no** (not installed on the dev Mac yet) | yes (agy 1.5.7) |
+| Live-verified | yes | capture, prompts, edits, AGENTS.md and the session log (0.171); enforcement and end of turn not yet seen | yes (agy 1.5.7) |
 
 Gotchas:
 - Antigravity's real tool names differ from its docs (`run_command`, `read_file`, `edit_file`,
@@ -201,7 +201,10 @@ Gotchas:
 - Antigravity headless runs refuse shell and MCP calls they cannot ask about. Replay detects
   `denied_actions` and reports an error instead of a measurement.
 - Codex runs a hook only after the user trusts it in `/hooks`. Changing a hook matcher makes them trust it
-  again.
+  again. `once init` adds Codex's hooks only if Codex is installed when it runs.
+- Codex 0.171 works in "code mode": its log shows many `exec` tool calls, each a script. Hooks fire for the real
+  actions inside them (commands, `apply_patch`), which is what once records. Its session log has no
+  `event_msg` user/agent messages; the reader falls back to `response_item` messages.
 - Claude Code headless sessions send no model at SessionStart; the model comes from the usage read at SessionEnd.
 - Agent payloads can be malformed. The hook normalizes ids to strings, and `store.sync` skips lines it
   cannot use. `ONCE_DEBUG_PAYLOADS=/path.jsonl` dumps raw payloads (masked) for checking after an agent update.
@@ -253,7 +256,8 @@ Restart it after UI changes: `pkill -f "once.cli ui"; once ui --detach`.
 Pull request linking (`prs.py`), strongest first:
 1. by hand;
 2. `gh pr create` output;
-3. branch: the session's non-default branch matches the PR head;
+3. branch: the session's non-default branch matches the PR head, and the session worked on it (committed,
+   ran git commit/push/merge/rebase or gh pr create, or switched onto the branch). Being on it is not enough;
 4. commit: commits between the session's first and last head are in the PR;
 5. tool output: a link to a PR in this repo.
 
