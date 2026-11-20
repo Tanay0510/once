@@ -170,7 +170,7 @@ def messages(path: str | None, agent: str) -> list[dict]:
         raw = []
     out = []
     for m in raw:
-        text = redact.redact_text(m["text"][:MAX_TEXT])[0]
+        text = redact.redact_text(m["text"], max_len=MAX_TEXT)[0]  # shown, never stored: the full reply
         if out and m["role"] == "agent" and out[-1]["role"] == "agent" and m.get("mid") and out[-1].get("mid") == m.get("mid"):
             out[-1]["text"] += "\n\n" + text  # one reply streamed as several entries
             continue

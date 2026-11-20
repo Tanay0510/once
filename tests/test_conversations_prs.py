@@ -342,3 +342,12 @@ def test_a_session_that_created_two_prs_is_listed_under_both(env, tmp_path):
     page = ui.view_prs(con, SLUG)
     assert "First" in page and "Second" in page and "1 of 1 session linked" in page
     assert "#7 open" in ui.view_conversations(con, SLUG, "two")  # one chip: the latest
+
+
+def test_long_replies_are_shown_whole_and_still_masked(env, tmp_path):
+    long = "word " * 2000 + f"the end {KEY}"
+    t = tmp_path / "long.jsonl"
+    t.write_text(json.dumps({"type": "assistant", "timestamp": iso(time.time()), "message": {"id": "m", "role": "assistant",
+                                                                                              "content": [{"type": "text", "text": long}]}}) + "\n")
+    m = conversations.messages(str(t), "claude-code")[0]["text"]
+    assert m.startswith("word word") and "the end [REDACTED]" in m and KEY not in m and "chars]" not in m

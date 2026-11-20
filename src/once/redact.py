@@ -48,7 +48,8 @@ def _pathlike(tok: str, before: str = "") -> bool:
     return named * 3 >= len(segs) * 2
 
 
-def redact_text(s: str) -> tuple[str, int]:
+def redact_text(s: str, max_len: int | None = MAX_STR) -> tuple[str, int]:
+    """Mask secrets in s. Stored text is cut at max_len; text only shown, never stored, may pass a larger one."""
     n = 0
     for p in _PATTERNS:
         s, k = p.subn(MASK, s)
@@ -86,8 +87,8 @@ def redact_text(s: str) -> tuple[str, int]:
         return tok
 
     s = _CANDIDATE.sub(ent, s)
-    if len(s) > MAX_STR:
-        s = s[:MAX_STR] + f"...[+{len(s) - MAX_STR} chars]"
+    if max_len is not None and len(s) > max_len:
+        s = s[:max_len] + f"...[+{len(s) - max_len} chars]"
     return s, n
 
 

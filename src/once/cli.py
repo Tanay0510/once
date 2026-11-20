@@ -2115,6 +2115,10 @@ def cmd_pr_check(a):
     if not root:
         _say("Run this from inside a git repo.")
         return 1
+    if not index.load(slug).get("rules"):
+        # A fresh machine (CI, say) has no index yet: build it, so the rules committed to the repo count.
+        repo.remember_root(slug, root)
+        rules.compile_index(slug)
     res = team.pr_check(slug, root, a.pr)
     if a.json:
         print(json.dumps(res))
@@ -2122,6 +2126,9 @@ def cmd_pr_check(a):
     body = team.pr_comment(res)
     if not res["files"]:
         _say("No changed files found (compared with the default branch).")
+        return 0
+    if a.post and getattr(a, "if_found", False) and not res["missed"] and not [r for r in res["rules"] if r["matched"]]:
+        _say("Nothing likely missed and no rules for these files: no comment posted.")
         return 0
     if a.post:
         if not res.get("pr"):
@@ -2466,6 +2473,8 @@ def build_parser():
     s = sub.add_parser("pr-check", parents=[common], help="files a pull request probably missed, from history")
     s.add_argument("pr", nargs="?")
     s.add_argument("--post", action="store_true", help="post the result as a comment")
+    s.add_argument("--if-found", action="store_true",
+                   help="with --post: comment only when a file looks missed or a rule applies (keeps clean PRs quiet)")
     s = sub.add_parser("editor", parents=[common], help="install the VS Code / Cursor sidebar")
     s.add_argument("action", choices=["install", "uninstall"])
     s.add_argument("which", nargs="?", choices=["vscode", "cursor", "windsurf"])
