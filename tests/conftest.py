@@ -23,6 +23,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("ONCE_HOME", str(home))
     monkeypatch.setenv("ONCE_OLD_HOME", str(tmp_path / "no-old-install"))
     monkeypatch.setenv("ONCE_CLAUDE_SETTINGS", str(settings))
+    # Never touch the real Antigravity or Codex config, even when those agents are installed here.
+    monkeypatch.setenv("ONCE_AGY_HOOKS", str(tmp_path / "gemini" / "config" / "hooks.json"))
+    monkeypatch.setenv("ONCE_CODEX_HOOKS", str(tmp_path / "codex" / "hooks.json"))
     monkeypatch.delenv("ONCE_DISABLE", raising=False)
     monkeypatch.chdir(repo)
     return {"home": home, "settings": settings, "repo": repo}

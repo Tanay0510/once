@@ -123,6 +123,8 @@ def parse(raw: dict, root: str | None) -> list[dict]:
         if kind == "shell":
             ev["command"] = str(cmd)[:500]
             ev["paths"], ev["writes"] = _cc.shell_paths(str(cmd), root)
+        if not failed:
+            _cc.pr_fields(ev, tool, str(cmd), raw.get("tool_response"))
         if failed:
             ev["error_digest"], ev["error_head"] = _cc._digest(err)
             ev["error"] = err[-600:]

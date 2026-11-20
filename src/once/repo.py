@@ -44,6 +44,12 @@ def head(cwd) -> str:
     return _git(cwd, "rev-parse", "--short", "HEAD")
 
 
+def branch(cwd) -> str:
+    """The checked-out branch, or "" when HEAD is detached."""
+    b = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+    return "" if b == "HEAD" else b
+
+
 def ensure_excluded(repo_root: Path, line: str) -> bool:
     """Ignore generated files through .git/info/exclude: no change to the project's .gitignore."""
     info = repo_root / ".git" / "info"

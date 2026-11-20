@@ -68,7 +68,7 @@ def _new_state(raw: dict, agent: str) -> dict:
         repo.remember_root(slug, root)
     return {"session_id": raw.get("session_id") or f"unknown-{int(time.time())}", "agent": agent,
             "slug": slug, "root": str(root) if root else None, "cwd": cwd,
-            "commit": repo.head(root) if root else "", "injected": [],
+            "commit": repo.head(root) if root else "", "branch": repo.branch(root) if root else "", "injected": [],
             "held_out": _held_out(raw.get("session_id") or "", float(cfg.get("holdout_fraction", 0))),
             "paused": paths.off_flag().exists() or paths.off_flag(slug).exists(),
             "started": time.time()}
@@ -258,11 +258,13 @@ def handle(raw: dict, agent: str, event: str | None = None) -> str:
 
     if fresh and name != "SessionStart":
         # The session began before the hooks were installed: open it lazily.
-        events.insert(0, {"event": "session_start", "source": "late", "cwd": state["cwd"]})
+        events.insert(0, {"event": "session_start", "source": "late", "cwd": state["cwd"],
+                          "transcript_path": raw.get("transcript_path")})
 
     for ev in events:
         if ev["event"] == "session_start":
-            ev.update({"commit": state["commit"], "held_out": state["held_out"], "paused": state["paused"]})
+            ev.update({"commit": state["commit"], "branch": state.get("branch", ""), "held_out": state["held_out"],
+                       "paused": state["paused"]})
             try:
                 ev["agent_version"] = json.loads((__import__("once.paths", fromlist=["x"]).local()
                                                   / "agent_versions.json").read_text()).get(agent)
@@ -421,6 +423,14 @@ def handle(raw: dict, agent: str, event: str | None = None) -> str:
         elif name in ("SessionEnd", "Stop"):
             snapshot.spawn(state["root"], state["session_id"], "end")
 
+    if name in ("Stop", "SessionEnd") and state.get("root"):
+        # Where the work ended up: the branch and commit at the end of each turn link a session to its PR.
+        from . import repo as _repo
+        b, h = _repo.branch(state["root"]), _repo.head(state["root"])
+        if (b, h) != (state.get("last_branch", state.get("branch")), state.get("last_head", state.get("commit"))):
+            events.append({"event": "git_state", "branch": b, "head": h})
+            state["last_branch"], state["last_head"] = b, h
+
     if name == "SessionEnd" and not os.environ.get("ONCE_SLUG"):
         try:
             from . import collector
@@ -436,6 +446,8 @@ def handle(raw: dict, agent: str, event: str | None = None) -> str:
         for ev in events:
             if ev["event"] == "session_end":
                 usage = _usage(raw.get("transcript_path"))
+                if raw.get("transcript_path"):
+                    ev.setdefault("transcript_path", raw["transcript_path"])
                 if usage:
                     ev["usage"] = usage
         out = _end_line(state) or out

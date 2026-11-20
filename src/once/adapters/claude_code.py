@@ -83,6 +83,32 @@ def _failed(resp) -> tuple[bool, str]:
     return False, ""
 
 
+_PR_URL = re.compile(r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)")
+
+
+def pr_urls(output) -> list[str]:
+    """GitHub pull request links in a tool's output, e.g. what `gh pr create` prints. Shared by every adapter."""
+    if output is None:
+        return []
+    text = output if isinstance(output, str) else json.dumps(output, default=str)
+    out = []
+    for m in _PR_URL.finditer(text[:200_000]):
+        u = f"https://github.com/{m.group(1)}/pull/{m.group(2)}"
+        if u not in out:
+            out.append(u)
+    return out[:5]
+
+
+def pr_fields(ev: dict, tool: str, command: str, output) -> None:
+    """Record the PR links a shell or MCP call printed, and whether that call created the PR."""
+    if ev.get("tool") not in ("shell", "mcp"):
+        return
+    urls = pr_urls(output)
+    if urls:
+        ev["pr_urls"] = urls
+        ev["pr_created"] = bool(re.search(r"\bgh\s+pr\s+create\b", command or "")) or "create_pull_request" in tool
+
+
 _WRITES = re.compile(r"(>>?|\btee\b|\bsed\s+-i|\bmv\b|\bcp\b|\brm\b|\btouch\b|\bpatch\b|\bgit\s+(apply|checkout|restore)\b)")
 
 
@@ -153,6 +179,8 @@ def parse(raw: dict, root: str | None) -> list[dict]:
         if kind == "shell":
             ev["command"] = str(ti.get("command", ""))[:500]
             ev["paths"], ev["writes"] = shell_paths(str(ti.get("command", "")), root)
+        if not failed:
+            pr_fields(ev, tool, str(ti.get("command", "")), resp)
         if failed:
             ev["error_digest"], ev["error_head"] = _digest(err)
             ev["error"] = err[-600:]
