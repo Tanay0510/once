@@ -381,3 +381,18 @@ def test_pr_check_on_a_fresh_machine_uses_the_rules_committed_to_the_repo(remote
     assert cli.main(["pr-check", "8", "--post"]) == 0
     calls = [json.loads(l) for l in remote_repo["gh_log"].read_text().splitlines()]
     assert any(c[:3] == ["pr", "comment", "7"] and "--edit-last" in c for c in calls)  # one comment, updated
+
+
+def test_pr_check_if_found_keeps_clean_pull_requests_quiet(remote_repo, capsys):
+    work = remote_repo["work"]
+    cli.main(["init", "--yes"])
+    subprocess.run(["git", "-C", str(work), "checkout", "-q", "-b", "clean"], check=True)
+    (work / "src" / "other0.py").write_text("y = 2\n")  # never changes with anything else
+    subprocess.run(["git", "-C", str(work), *GIT, "commit", "-qam", "clean change"], check=True)
+    fake = remote_repo["tmp"] / "gh"  # this PR touches only other0.py
+    fake.write_text(fake.read_text().replace("'src/a.py'", "'src/other0.py'"))
+    capsys.readouterr()
+    assert cli.main(["pr-check", "7", "--post", "--if-found"]) == 0
+    assert "no comment posted" in capsys.readouterr().out
+    calls = [json.loads(l) for l in remote_repo["gh_log"].read_text().splitlines()]
+    assert not any(c[:2] == ["pr", "comment"] for c in calls)

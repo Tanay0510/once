@@ -162,7 +162,7 @@ tasks need in its settings, for example `{"permissions": {"allow": ["command(pyt
       steps:
         - uses: actions/checkout@v4
           with: {fetch-depth: 0}          # it reads history
-        - uses: Tanay0510/once@v0.8.1     # posts one comment and updates it on each push
+        - uses: Tanay0510/once@v0.8.1     # comments only when it finds something; one comment, updated
   ```
 
   While the once repository is private, other repositories cannot use the action; it runs on once's own pull

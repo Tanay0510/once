@@ -13,8 +13,10 @@ inputs:
       with, from this repository.
     default: "git+https://github.com/Tanay0510/once@${{ github.action_ref }}"
   post:
-    description: "true: post the result as a pull request comment, updated on each push. false: job summary only."
-    default: "true"
+    description: >-
+      found: comment only when a file looks missed or a rule applies (the default, so clean pull requests stay
+      quiet). always: comment on every pull request. never: job summary only. The comment is updated on each push.
+    default: "found"
   token:
     description: Token for reading the pull request and commenting. Needs pull-requests write to post.
     default: ${{ github.token }}
@@ -37,4 +39,7 @@ runs:
           echo "::warning::once pr-check needs history: use actions/checkout with fetch-depth: 0"
         fi
         once pr-check "$PR" >> "$GITHUB_STEP_SUMMARY" || true
-        if [ "${{ inputs.post }}" = "true" ]; then once pr-check "$PR" --post || echo "::warning::could not post the comment"; fi
+        case "${{ inputs.post }}" in
+          found|true) once pr-check "$PR" --post --if-found || echo "::warning::could not post the comment" ;;
+          always) once pr-check "$PR" --post || echo "::warning::could not post the comment" ;;
+        esac
