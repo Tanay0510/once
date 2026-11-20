@@ -33,7 +33,7 @@ wheels = [
 ]
 
 [[package]]
-name = "once"
+name = "once-cli"
 version = "0.9.0"
 source = { editable = "." }
 dependencies = [

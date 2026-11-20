@@ -1,5 +1,5 @@
 [project]
-name = "once"
+name = "once-cli"  # "once" is taken on PyPI; the command and the import name stay `once`
 version = "0.9.0"
 description = "Your coding agent makes each mistake once: rules learned from Claude Code, Codex and Antigravity sessions."
 dynamic = ["readme"]  # README.md with relative links made absolute for PyPI; see fancy-pypi-readme below

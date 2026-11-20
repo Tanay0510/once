@@ -15,7 +15,7 @@ Release history, newest first, with the details behind each feature. New here? S
 
 - Licensed under the Business Source License 1.1 (see [LICENSE](LICENSE)): free to use, including at work, except
   in a competing commercial offering; each version becomes Apache-2.0 four years after it is published.
-- Published to PyPI: `uv tool install once`. The README is now a short introduction; this file keeps the history.
+- Published to PyPI as `once-cli` (`once` was taken): `uv tool install once-cli`. The command is still `once`. The README is now a short introduction; this file keeps the history.
 - The pr-check Action installs once from PyPI at the action's version.
 
 ## New in 0.8.1

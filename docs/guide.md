@@ -23,7 +23,7 @@ on your machine unless you connect a team collector.
 ## Install
 
 ```bash
-uv tool install once       # or: pipx install once
+uv tool install once-cli   # or: pipx install once-cli; the command is `once`
 cd <a git repo you use with an agent>
 once init                  # shows what it will change, then installs on one confirmation
 once demo                  # optional: the whole loop on a toy repo, touching nothing of yours

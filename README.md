@@ -6,8 +6,8 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/once/"><img alt="PyPI" src="https://img.shields.io/pypi/v/once?color=E9A23B&label=pypi"></a>
-  <a href="https://pypi.org/project/once/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/once?color=555"></a>
+  <a href="https://pypi.org/project/once-cli/"><img alt="PyPI" src="https://img.shields.io/pypi/v/once-cli?color=E9A23B&label=pypi"></a>
+  <a href="https://pypi.org/project/once-cli/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/once-cli?color=555"></a>
   <a href="https://github.com/Tanay0510/once/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Tanay0510/once/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: BSL 1.1" src="https://img.shields.io/badge/license-BSL%201.1-555"></a>
   <img alt="Works with Claude Code, Codex and Antigravity" src="https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Antigravity-7FD6A4">
@@ -33,7 +33,7 @@ replaying the session with and without it, and hands it back to the agent next t
 ## Install
 
 ```bash
-uv tool install once        # or: pipx install once
+uv tool install once-cli    # or: pipx install once-cli  (the command is `once`)
 once demo                   # the whole loop on a toy repo, in seconds; touches nothing of yours
 ```
 
