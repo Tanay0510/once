@@ -45,7 +45,7 @@ Everything is local-first. Sessions, rules and the dashboard live on the develop
 **team collector** receives counts and outcomes, never prompts, code or text.
 
 It is a Python 3.10+ CLI with one dependency (`pyyaml`), packaged with hatchling, run with `uv`, published on PyPI
-as `once`. Version 0.9.0. GitHub: `Tanay0510/once`. License: Business Source License 1.1 (`LICENSE`): free to use,
+as `once-cli` (the name `once` was taken; the command and the import name are `once`). Version 0.9.0. GitHub: `Tanay0510/once`. License: Business Source License 1.1 (`LICENSE`): free to use,
 including at work, except in a competing commercial offering; each version becomes Apache-2.0 four years after it
 is published. Don't change the license text or add code under another license without the owner.
 
