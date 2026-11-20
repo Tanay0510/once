@@ -1,6 +1,6 @@
 [project]
 name = "once"
-version = "0.8.0"
+version = "0.8.1"
 description = "Memory for coding agents: capture sessions, inject reviewed rules, learn from outcomes."
 readme = "README.md"
 requires-python = ">=3.10"

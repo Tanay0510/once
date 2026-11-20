@@ -1,4 +1,4 @@
-# once (v0.8.0)
+# once (v0.8.1)
 
 Your coding agent makes each mistake once. `once` watches your Claude Code, Codex and Antigravity sessions, turns
 failures and your corrections into rules for the repository, tests each rule by replaying the session with and
@@ -7,6 +7,30 @@ without it, and hands the rules that work back to your agent at the start of the
 ```bash
 once demo        # the whole loop on a bundled toy repo in a few seconds; touches nothing of yours
 ```
+
+![The dashboard: sessions, conversations and pull requests](docs/img/tour.gif)
+
+**New here? Read [the guide](docs/guide.md).** The rest of this file is the release history and the details.
+
+## New in 0.8.1
+
+- **Pull requests** (`once ui`, key 4): each pull request your agents worked on, with the sessions behind it and
+  how each was linked: by hand, `gh pr create` output, branch, commit, or a PR link in tool output. State and
+  checks come from `gh`, cached for five minutes and refreshed in the background. "Did rules help ship?" compares
+  sessions given rules with sessions given none.
+- **Conversations** (key 3): your prompts and the agent's replies, from each agent's own transcript (Claude Code,
+  Codex, Antigravity), tool steps folded, flags and corrections inline, searchable, secrets masked, copy as Markdown.
+- Hooks record the branch at session start and the branch and commit at the end of each turn, and PR links printed
+  by shell or MCP calls.
+- A repo dropdown on every page.
+- The collector receives each session's PR number, state and link kind (never the URL or any text) and shows how
+  many sessions led to a merged PR.
+- The weekly digest can go by email (`digest_email`, `smtp_host`, `smtp_user`; the password comes from
+  `ONCE_SMTP_PASSWORD` or `smtp_password_cmd`, never the config).
+- Two experiment arms: `unreviewed` (rules plus every suggestion still waiting) and `rules+native`.
+- Fixed: a session recorded in two files (the repo gained a remote mid-session) lost events in the index. The
+  index is rebuilt once on upgrade; nothing to do.
+- Fixed: tests could write to the real Antigravity and Codex config when those agents were installed.
 
 ## New in 0.8
 
@@ -247,7 +271,7 @@ pull request you review.
 
 ```bash
 uv sync                  # Python 3.10 or newer, pytest included
-uv run pytest -q         # 93 tests, about a minute and a half
+uv run pytest -q         # 104 tests, about a minute and a half
 uv run once demo         # the loop end to end
 ```
 
@@ -297,32 +321,41 @@ src/once/
   cost.py              tokens, prices, memory overhead, saving and break-even per rule
   demo.py              `once demo`, with a scripted agent and drafter in demo_assets/
   collector.py         the team's central collector: server, client and team dashboard
+  prs.py               which pull request each session led to; gh cache
+  conversations.py     prompts and replies from each agent's transcript
+docs/guide.md          the user guide; docs/img/ holds its screenshots and the social preview
   cli.py               the commands
-tests/                 93 tests, including full simulated sessions through the real hook
+tests/                 104 tests, including full simulated sessions through the real hook
 ```
 
 ## Known gaps
 
-Verified on a real machine: install, capture, rules at session start, failure detection, `teach`, `last`,
-`tag`, `why`, `doctor`, replay, mining, validation and one `lab run`.
+Verified on a real Mac with live agents (November 2026, about $0.25 of model spend):
+- **Claude Code:**
+  - capture, rules at session start and native path rules;
+  - block and check enforcement, and the MCP tools;
+  - headless replay;
+  - token and model capture;
+  - a PR linked by its own `gh pr create`;
+  - conversations read from real transcripts.
+- **Antigravity (agy 1.5.7):**
+  - capture, per-turn rules and glob rule files;
+  - `PreToolUse` allow and deny, and check findings delivered at the next turn;
+  - the MCP server;
+  - exit codes read from its transcript.
+- **Branch and commit linking** of sessions to a real GitHub pull request.
+- **Installation and data:** upgrade from 0.7.1 and uninstall with an exact restore, the wheel install,
+  2,000 sessions and 300 rules.
 
-Built and tested only with stand-ins, not yet run for real:
-- Everything in "Without typing once": the status line in a real Claude Code, the agent asking about
-  suggestions and calling `review_rule`, SwiftBar, the editor extension (never loaded in a real editor),
-  Slack, and `once share` against GitHub (tested with a local remote and a stand-in for `gh`).
-- Everything for Antigravity. The adapter was written from the published hooks reference and has never
-  talked to a real `agy`. Its headless command (`agy --output-format json --mode accept-edits -p ...`) is a
-  best guess; override it with `--agent-cmd` if it does not fit your version.
-- `once learn` drafting, `once lab sweep`, `once lab exp`, `once lab regress`, both baseline arms.
-  The first real sweep and learn ended with the agent doing no work; 0.4.1 reports the reason.
-- Token capture, the session-end line, slash commands, the MCP server in a live session, skills,
-  tree snapshots, transcript import, the ignored-rule detector, automatic drafting after sessions.
-
-Built in 0.8 and tested with stand-ins only: everything under "New in 0.8". The enforcement replies follow the
-Claude Code hooks reference (`permissionDecision: deny` before a tool call, `decision: block` after one) and have
-not been seen working in a live session. The outer loop has run only on synthetic history; its numbers mean
-something after weeks of real decisions, and the phase 5 claim (a new repo learns faster) stays unproven until
-`once lab meta compare` has run on a third repo.
+Built and tested only with stand-ins:
+- **Codex:** everything. It was not installed on the test machine. The hooks and the session-log reader follow
+  its published reference.
+- **The interactive parts of Claude Code:** the status line, the agent asking about suggestions, slash
+  commands. Also SwiftBar and the editor extension.
+- **Real-model learning:** `once learn` drafting with a real model, sweeps, experiments and regression at scale.
+  The outer loop has only run on synthetic history.
+- **Delivery and sharing:** Slack and email delivery, `once share` against GitHub, and the collector across
+  real machines.
 
 Not built:
 - A container sandbox. It needs the agent signed in inside the container, which cannot be set up blind.
