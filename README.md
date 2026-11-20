@@ -275,7 +275,7 @@ uv run pytest -q         # 104 tests, about a minute and a half
 uv run once demo         # the loop end to end
 ```
 
-CI (`.github/workflows/ci.yml`) runs the tests on Linux and macOS with Python 3.10, 3.12 and 3.13, builds the
+CI (`.github/workflows/ci.yml`) runs the tests on Linux with Python 3.10, 3.12 and 3.13, builds the
 wheel, checks it carries its assets and runs `once demo` from it. A tag such as `v0.8.0`, matching the version in
 `pyproject.toml`, runs `release.yml`: tests, a GitHub release with the wheel and sdist, the collector image on
 `ghcr.io/<owner>/once-collector`, and PyPI when the repository variable `PUBLISH_PYPI` is `true` and PyPI trusted
