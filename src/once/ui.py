@@ -57,6 +57,14 @@ h1{font:600 20px/1.2 var(--sans);letter-spacing:-.01em;margin:0}
 .sum{color:var(--muted);margin-top:4px}
 .hint{color:var(--faint);font-size:13px;margin:-8px 0 16px}
 .repos{font:12.5px var(--mono);color:var(--faint);text-align:right;white-space:nowrap}
+.repopick{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--faint)}
+.repopick select{font:12.5px var(--mono);color:var(--ink);background:var(--raise);border:1px solid var(--edge);border-radius:8px;
+ padding:7px 30px 7px 10px;min-height:34px;max-width:min(340px,70vw);appearance:none;-webkit-appearance:none;cursor:pointer;
+ background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+ background-position:calc(100% - 15px) 50%,calc(100% - 10px) 50%;background-size:5px 5px;background-repeat:no-repeat}
+.repopick select:hover{border-color:rgba(243,241,236,.3)}.repopick select:focus{outline:none;border-color:rgba(233,162,59,.6)}
+.tools{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:10px}.tools .search input[type=text]{width:220px}
+.top>div:first-child{min-width:0;flex:1 1 280px}
 .repos a{color:var(--faint);text-decoration:none}.repos a:hover{color:var(--ink)}.repos b{color:var(--ink);font-weight:500}.repos .sep{color:var(--ghost);margin:0 7px}
 
 /* panels */
@@ -223,9 +231,11 @@ form.inline{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .linkf input[type=text]{width:170px;padding:6px 9px}
 .scroll{overflow-x:auto}
 
-@media (max-width:900px){.cols,.cols.even,.cols.list{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:900px){.cols,.cols.even,.cols.list{grid-template-columns:minmax(0,1fr)}
+ .convcols>div:last-child{order:-1}}
 @media (max-width:700px){
- .app{grid-template-columns:1fr;background:none}aside{background:var(--side);border-bottom:1px solid var(--line);position:static;height:auto;flex-direction:row;align-items:center;gap:4px;padding:8px;overflow-x:auto}
+ .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr;background:none}aside nav a{white-space:nowrap}
+ .repos{white-space:normal}.repos a,.repos b{white-space:nowrap}.search input[type=text]{width:auto;flex:1;min-width:0}.search{width:100%}aside{background:var(--side);border-bottom:1px solid var(--line);position:static;height:auto;flex-direction:row;align-items:center;gap:4px;padding:8px;overflow-x:auto}
  .brand{padding:4px 8px}aside nav{display:flex;gap:2px}aside nav a.on:before{display:none}aside .foot{display:none}
  main{padding:16px 14px 40px}.top{flex-direction:column;align-items:flex-start}.repos{text-align:left}.rows .opt{display:none}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -305,11 +315,17 @@ def head(screen: str, summary: str = "", hint: str = "", repos: str = "", stamp:
             + f"</div>{repos}</div>" + (f'<p class="hint">{hint}</p>' if hint else ""))
 
 
-def repo_bar(con, repo: str | None, base: str) -> str:
+def repo_bar(con, repo: str | None, base: str, keep: dict | None = None, allow_all: bool = True) -> str:
+    """A repo picker: a plain GET form, so it works without JavaScript; with it, picking a repo goes there at once."""
     found = [r[0] for r in con.execute("SELECT DISTINCT repo FROM sessions WHERE repo NOT LIKE 'replay/%' ORDER BY repo")]
-    items = ([f'<a href="{base}">all repos</a>'] if repo else ["<b>all repos</b>"]) + [
-        f'<a href="{base}?repo={urllib.parse.quote(r)}">{e(r)}</a>' if r != repo else f"<b>{e(r)}</b>" for r in found]
-    return '<div class="repos">' + '<span class="sep">·</span>'.join(items) + "</div>"
+    if repo and repo not in found:
+        found.append(repo)
+    opts = (f'<option value=""{" selected" if not repo else ""}>All repos</option>' if allow_all else "") + "".join(
+        f'<option value="{e(r)}"{" selected" if r == repo else ""}>{e(r)}</option>' for r in found)
+    hidden = "".join(f'<input type=hidden name="{e(k)}" value="{e(v)}">' for k, v in (keep or {}).items() if v)
+    return (f'<form class="repopick" method=get action="{e(base)}">{hidden}<label for="repo-pick">Repo</label>'
+            f'<select id="repo-pick" name=repo onchange="this.form.submit()">{opts}</select>'
+            '<noscript><button>Go</button></noscript></form>')
 
 
 def window(title: str, body: str, right: str = "", foot: str = "", pad: bool = True) -> str:
@@ -911,7 +927,7 @@ def view_rules(con, repo, rid, cwd_slug, only_candidates=False, msg: str | None 
                           if cur != "block" else "")
                        + f'<form method=post action="/rules/drop">{hid}<button>Retire</button></form></div></div>')
         detail += impact_html(rule_impact(con, slug, sel)) + _evidence(sel)
-    crumbs = f'<div class="repos"><b>{e(slug)}</b></div>'
+    crumbs = repo_bar(con, slug, "/review" if only_candidates else "/rules", allow_all=False) if slug else ""
     if msg:
         detail = f'<div class="msg">{e(msg)}</div>' + detail
     if only_candidates and not all_rules:
@@ -1141,6 +1157,18 @@ def view_prs(con, repo, state: str | None = None, msg: str | None = None):
              f'<div class="tile"><span>Open</span><b>{count("open")}</b></div>'
              f'<div class="tile"><span>Sessions linked to a PR</span><b>{n_linked} of {len(rows)}</b></div>'
              f'<div class="tile"><span>Flagged steps behind merged PRs</span><b class="{"rose" if flagged_merged else ""}">{flagged_merged}</b></div></div>')
+    from .collector import shipping
+    ship = shipping([{"rules_given": sorted({i for ev in evs if ev.get("event") == "rule_injected" for i in ev.get("rule_ids", [])}),
+                      "held_out": r["held_out"], "steps": r["steps"],
+                      "pr": {"state": pr.get("state")} if pr else None} for r, evs, pr, _ in linked])
+    ship_html = ""
+    if len(ship) == 2 and any(v["merged"] for v in ship.values()):
+        pct = lambda v: "–" if v is None else f"{100 * v:.0f}%"
+        ship_html = window("Did rules help ship?", '<table class="rows"><thead><tr><th>Sessions</th><th>Count</th>'
+                           '<th>Led to a merged PR</th><th>Steps per merged session</th></tr></thead><tbody>' + "".join(
+                               f'<tr><td>{e(k)}</td><td class="n">{v["sessions"]}</td><td class="n">{v["merged"]} ({pct(v["merged_rate"])})</td>'
+                               f'<td class="n">{v["steps_per_merged"] or "–"}</td></tr>' for k, v in sorted(ship.items())) + "</tbody></table>",
+                           "not a controlled test unless a hold-out is set", pad=False)
     seg = '<div class="seg" role="group" aria-label="Filter by state" style="margin-bottom:14px">' + "".join(
         f'<a href="/prs{_q(repo, state=k)}" class="{"on" if (state or "") == k else ""}"'
         f'{" aria-current=true" if (state or "") == k else ""}>{n} {c}</a>'
@@ -1192,7 +1220,7 @@ def view_prs(con, repo, state: str | None = None, msg: str | None = None):
                         f"{plural(len(loose), 'session')}" + (" · newest 20" if len(loose) > 20 else ""), pad=False) if loose else ""
     note = f'<div class="msg">{e(msg)}</div>' if msg else ""
     summary = f"{plural(len(allg), 'PR')} made with an agent · {n_linked} of {plural(len(rows), 'session')} linked"
-    body = (head("Pull requests", e(summary), status, repo_bar(con, repo, "/prs")) + note + tiles + seg + cards + loose_html)
+    body = (head("Pull requests", e(summary), status, repo_bar(con, repo, "/prs", {"state": state})) + note + tiles + seg + cards + ship_html + loose_html)
     return page("Pull requests", "prs", body, repo)
 
 
@@ -1229,7 +1257,7 @@ AGENTS = [("", "All"), ("claude-code", "Claude Code"), ("codex", "Codex"), ("ant
 
 
 def view_conversations(con, repo, sid=None, agent=None, q=None):
-    rows = _real_sessions(con, repo)
+    rows = [r for r in _real_sessions(con, repo) if r["prompt"] or r["steps"] or r["id"] == sid]  # nothing was said: skip
     if agent:
         rows = [r for r in rows if r["agent"] == agent]
     if q:
@@ -1266,7 +1294,7 @@ def view_conversations(con, repo, sid=None, agent=None, q=None):
     right = window("Conversation", '<div class="empty">Pick a conversation.</div>') if not sel else _conversation(con, sel, linked.get(sel["id"]))
     summary = "Everything you and your agents said, across Claude Code, Codex and Antigravity"
     hint = f"{plural(len(rows), 'conversation')} matching <b>{e(q)}</b>. <a href='/conversations{_q(repo, agent=agent)}'>Clear</a>" if q else ""
-    body = (head("Conversations", summary, hint, search) + '<div class="cols list"><div class="clist">' + pills + lst
+    body = (head("Conversations", summary, hint, f'<div class="tools">{repo_bar(con, repo, "/conversations", {"agent": agent})}{search}</div>') + '<div class="cols list convcols"><div class="clist">' + pills + lst
             + f"</div><div>{right}</div></div>")
     return page("Conversations", "conversations", body, repo)
 

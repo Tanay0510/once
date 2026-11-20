@@ -25,6 +25,11 @@ def _open() -> sqlite3.Connection:
     con = sqlite3.connect(paths.db(), timeout=10)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
+    cols = [r[1] for r in con.execute("PRAGMA table_info(events)")]
+    if cols and "file" not in cols:
+        # Before 0.8.1 events were keyed by (session, line), so a session recorded in two files (the repo gained a
+        # remote mid-session, say) lost events. The index is only a view of the files: rebuild it. Actions stay.
+        con.executescript("DROP TABLE IF EXISTS events; DROP TABLE IF EXISTS files; DROP TABLE IF EXISTS sessions;")
     con.executescript("""
     CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, offset INTEGER NOT NULL, lines INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions(
@@ -33,9 +38,9 @@ def _open() -> sqlite3.Connection:
         steps INTEGER DEFAULT 0, flags INTEGER DEFAULT 0, tags INTEGER DEFAULT 0,
         rules_given INTEGER DEFAULT 0, held_out INTEGER DEFAULT 0);
     CREATE TABLE IF NOT EXISTS events(
-        session_id TEXT, seq INTEGER, ts REAL, event TEXT, tool TEXT, target TEXT, ok INTEGER,
-        raw TEXT, PRIMARY KEY(session_id, seq));
-    CREATE INDEX IF NOT EXISTS ev_session ON events(session_id, seq);
+        session_id TEXT, file TEXT, seq INTEGER, ts REAL, event TEXT, tool TEXT, target TEXT, ok INTEGER,
+        raw TEXT, PRIMARY KEY(session_id, file, seq));
+    CREATE INDEX IF NOT EXISTS ev_session ON events(session_id, ts, file, seq);
     CREATE TABLE IF NOT EXISTS actions(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, kind TEXT, payload TEXT, undone INTEGER DEFAULT 0);
     """)
     return con
@@ -53,7 +58,7 @@ def sync(con: sqlite3.Connection | None = None) -> int:
             offset, lines = (row["offset"], row["lines"]) if row else (0, 0)
             size = f.stat().st_size
             if size < offset:  # file was replaced; start over
-                con.execute("DELETE FROM events WHERE session_id=?", (f.stem,))
+                con.execute("DELETE FROM events WHERE file=?", (str(f),))
                 offset, lines = 0, 0
             if size == offset:
                 continue
@@ -75,8 +80,8 @@ def sync(con: sqlite3.Connection | None = None) -> int:
                 e["seq"] = lines
                 txt = lambda v: v if v is None or isinstance(v, str) else json.dumps(v)  # never let one odd line stop the sync
                 ts = e.get("ts") if isinstance(e.get("ts"), (int, float)) else None
-                con.execute("INSERT OR REPLACE INTO events VALUES(?,?,?,?,?,?,?,?)",
-                            (txt(e.get("session_id")) or f.stem, lines, ts, txt(e.get("event")), txt(e.get("tool")),
+                con.execute("INSERT OR REPLACE INTO events VALUES(?,?,?,?,?,?,?,?,?)",
+                            (txt(e.get("session_id")) or f.stem, str(f), lines, ts, txt(e.get("event")), txt(e.get("tool")),
                              txt(e.get("target")), None if e.get("ok") is None else int(bool(e["ok"])),
                              json.dumps(e)))
                 touched.add(txt(e.get("session_id")) or f.stem)
@@ -95,8 +100,12 @@ def sync(con: sqlite3.Connection | None = None) -> int:
 
 
 def events(con, session_id: str) -> list[dict]:
-    return [json.loads(r["raw"]) for r in
-            con.execute("SELECT raw FROM events WHERE session_id=? ORDER BY seq", (session_id,))]
+    """A session's events in time order, numbered 0.. across every file it was recorded in."""
+    out = [json.loads(r["raw"]) for r in con.execute(
+        "SELECT raw FROM events WHERE session_id=? ORDER BY COALESCE(ts, 0), file, seq", (session_id,))]
+    for i, e in enumerate(out):
+        e["seq"] = i
+    return out
 
 
 def _refresh_session(con, sid: str):
@@ -113,7 +122,7 @@ def _refresh_session(con, sid: str):
     con.execute("""INSERT OR REPLACE INTO sessions
         (id, repo, agent, model, cwd, commit_sha, started, last_event, ended, prompt, steps, flags, tags, rules_given, held_out)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (sid, start.get("repo"), start.get("agent"), model, start.get("cwd"), start.get("commit"),
+        (sid, evs[-1].get("repo") or start.get("repo"), start.get("agent"), model, start.get("cwd"), start.get("commit"),
          evs[0].get("ts"), evs[-1].get("ts"), int(any(e.get("event") == "session_end" for e in evs)),
          prompt, len(detectors.steps(evs)), len(flags),
          len(detectors.annotations(evs)), len(given),

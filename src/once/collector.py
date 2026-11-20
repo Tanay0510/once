@@ -5,7 +5,8 @@ are given and broken where, and how the suggestions people review fare (the oute
 
 What leaves a machine, and only after `once collector connect`:
   - per session: a salted hash of its id, repo, agent, start time, step count, flags by detector, avoidable
-    ratio, the ids of the rules given and broken, the folders flagged steps touched, outcome, cost and tokens
+    ratio, the ids of the rules given and broken, the folders flagged steps touched, outcome, cost and tokens,
+    whether it was held out from rules, and the number, state and link kind of the pull request it led to
   - per rule: id, wording, level, status, how often given and ignored
   - per review decision: source, decision, edit ratio, pipeline version
 Never: prompts, commands, error text, file contents or paths below the folder level. The server stores what it
@@ -49,6 +50,10 @@ def _db(data: Path) -> sqlite3.Connection:
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
     con.executescript(SCHEMA)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(sessions)")}
+    for col, kind in (("pr", "TEXT"), ("held_out", "INTEGER")):  # added in 0.8.1
+        if col not in cols:
+            con.execute(f"ALTER TABLE sessions ADD COLUMN {col} {kind}")
     return con
 
 
@@ -74,13 +79,18 @@ def ingest(con, body: dict) -> dict:
     now = time.time()
     n = {"sessions": 0, "rules": 0, "decisions": 0}
     for s in body.get("sessions") or []:
-        con.execute("INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        pr = s.get("pr") if isinstance(s.get("pr"), dict) else None
+        if pr:
+            pr = {"number": int(pr.get("number") or 0), "state": str(pr.get("state") or "")[:12], "how": str(pr.get("how") or "")[:20]}
+        con.execute("INSERT OR REPLACE INTO sessions(dev, sid, repo, agent, started, steps, flags, avoidable, rules_given, "
+                    "broken, folders, verified, cost, tokens, received, pr, held_out) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (dev, str(s["sid"])[:64], str(s.get("repo", ""))[:200], str(s.get("agent", ""))[:40],
                      float(s.get("started") or 0), int(s.get("steps") or 0), json.dumps(s.get("flags") or {}),
                      float(s.get("avoidable") or 0), json.dumps(s.get("rules_given") or []),
                      json.dumps(s.get("broken") or []), json.dumps(s.get("folders") or []),
                      None if s.get("verified") is None else int(bool(s["verified"])),
-                     float(s.get("cost") or 0), int(s.get("tokens") or 0), now))
+                     float(s.get("cost") or 0), int(s.get("tokens") or 0), now, json.dumps(pr) if pr else None,
+                     int(bool(s.get("held_out")))))
         n["sessions"] += 1
     for r in body.get("rules") or []:
         con.execute("INSERT OR REPLACE INTO rules VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -105,8 +115,12 @@ def summary(con, repo: str | None = None, days: int = 30) -> dict:
     by_dev, by_agent, by_repo, hot, dets, broken = {}, {}, {}, {}, {}, {}
     for r in rows:
         for key, d in ((r["dev"], by_dev), (r["agent"], by_agent), (r["repo"], by_repo)):
-            x = d.setdefault(key, {"sessions": 0, "avoidable": 0.0, "flags": 0, "verified": 0, "checked": 0, "cost": 0.0})
+            x = d.setdefault(key, {"sessions": 0, "avoidable": 0.0, "flags": 0, "verified": 0, "checked": 0, "cost": 0.0,
+                                   "linked": 0, "merged": 0})
             x["sessions"] += 1
+            pr = json.loads(r["pr"]) if r["pr"] else None
+            x["linked"] += bool(pr)
+            x["merged"] += bool(pr and pr.get("state") == "merged")
             x["avoidable"] += r["avoidable"]
             x["flags"] += sum(json.loads(r["flags"]).values())
             x["cost"] += r["cost"] or 0
@@ -124,6 +138,7 @@ def summary(con, repo: str | None = None, days: int = 30) -> dict:
             x["avoidable"] = round(x["avoidable"] / x["sessions"], 3) if x["sessions"] else 0
             x["verified_rate"] = round(x["verified"] / x["checked"], 3) if x["checked"] else None
             x["cost"] = round(x["cost"], 2)
+    ship = shipping([dict(r) for r in rows])
     rq = "SELECT id, repo, directive, level, scope_level, SUM(given) g, SUM(ignored) i, COUNT(DISTINCT dev) devs " \
          "FROM rules WHERE status='active'" + (" AND repo=?" if repo else "") + " GROUP BY repo, id ORDER BY g DESC LIMIT 50"
     rule_rows = [dict(x) for x in con.execute(rq, (repo,) if repo else ())]
@@ -134,8 +149,30 @@ def summary(con, repo: str | None = None, days: int = 30) -> dict:
     return {"days": days, "repo": repo, "sessions": len(rows), "developers": by_dev, "agents": by_agent, "repos": by_repo,
             "detectors": dets, "hotspots": [{"repo": k[0], "folder": k[1], "sessions": v}
                                             for k, v in sorted(hot.items(), key=lambda kv: -kv[1])[:15]],
-            "rules": rule_rows, "broken": broken, "decisions": dec,
+            "rules": rule_rows, "broken": broken, "decisions": dec, "shipping": ship,
             "last_push": {x["dev"]: x["last_push"] for x in con.execute("SELECT dev, last_push FROM devs")}}
+
+
+def shipping(rows: list[dict]) -> dict:
+    """Sessions given rules against sessions given none (held out, or no rule applied): how many led to a merged PR,
+    and how many steps those took. rows: dicts with rules_given (JSON list or list), held_out, steps, pr (JSON or dict)."""
+    out = {}
+    for r in rows:
+        given = r.get("rules_given")
+        given = json.loads(given) if isinstance(given, str) else (given or [])
+        arm = "with rules" if given and not r.get("held_out") else "without rules"
+        pr = r.get("pr")
+        pr = json.loads(pr) if isinstance(pr, str) else pr
+        x = out.setdefault(arm, {"sessions": 0, "linked": 0, "merged": 0, "merged_steps": 0})
+        x["sessions"] += 1
+        x["linked"] += bool(pr)
+        if pr and pr.get("state") == "merged":
+            x["merged"] += 1
+            x["merged_steps"] += int(r.get("steps") or 0)
+    for x in out.values():
+        x["merged_rate"] = round(x["merged"] / x["sessions"], 3) if x["sessions"] else None
+        x["steps_per_merged"] = round(x["merged_steps"] / x["merged"], 1) if x["merged"] else None
+    return out
 
 
 def _page(sm: dict, token_q: str) -> str:
@@ -150,8 +187,9 @@ def _page(sm: dict, token_q: str) -> str:
         return ("<table><tr>" + "".join(f"<th>{h}</th>" for h in head) + "</tr>"
                 + "".join("<tr>" + "".join(f"<td{' class=n' if i else ''}>{c}</td>" for i, c in enumerate(r)) + "</tr>" for r in rows)
                 + "</table>") if rows else '<p class="sub">Nothing yet.</p>'
-    group = lambda d, label: table([label, "Sessions", "Avoidable", "Flags", "Verified", "Cost"], [
-        (e(k), v["sessions"], pct(v["avoidable"]), v["flags"], pct(v["verified_rate"]), f"${v['cost']:.2f}" if v["cost"] else "–")
+    group = lambda d, label: table([label, "Sessions", "Avoidable", "Flags", "Verified", "Led to a merged PR", "Cost"], [
+        (e(k), v["sessions"], pct(v["avoidable"]), v["flags"], pct(v["verified_rate"]),
+         f"{v.get('merged', 0)} of {v['sessions']}", f"${v['cost']:.2f}" if v["cost"] else "–")
         for k, v in sorted(d.items(), key=lambda kv: -kv[1]["sessions"])])
     repos = "".join(f' · <a href="/?repo={urllib.parse.quote(r)}{token_q}">{e(r)}</a>' for r in sm["repos"])
     return (f"<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width'>"
@@ -167,6 +205,11 @@ def _page(sm: dict, token_q: str) -> str:
             + "<h2>Rules across the team</h2>" + table(["Rule", "Repo", "Level", "Given", "Ignored", "Developers"], [
                 (f"{e(r['id'])}<br><span class=sub>{e(r['directive'])}</span>", e(r["repo"]), e(r["level"]), r["g"],
                  f"<span class=rose>{r['i']}</span>" if r["i"] else 0, r["devs"]) for r in sm["rules"]])
+            + "<h2>Did rules help ship?</h2>" + table(["Sessions", "Count", "Linked to a PR", "Led to a merged PR", "Steps per merged session"], [
+                (e(k), v["sessions"], v["linked"], f"{v['merged']} ({pct(v['merged_rate'])})", v["steps_per_merged"] or "–")
+                for k, v in sorted(sm.get("shipping", {}).items())])
+            + "<p class=sub>Without rules: sessions held out for measurement, or where no rule applied. "
+              "Not a controlled experiment unless a hold-out is set.</p>"
             + "<h2>How suggestions fare</h2>" + table(["Source", "Accepted", "Edited", "Rejected"], [
                 (e(s), d.get("accepted", 0), d.get("accepted_with_edit", 0), d.get("rejected", 0)) for s, d in sm["decisions"].items()])
             + "<p class=sub style='margin-top:28px'>Only counts, rule wording, folders and outcomes reach this server; "
@@ -281,13 +324,27 @@ def payload(full: bool = False) -> dict:
     con = store.connect()
     store.sync(con)
     sessions = []
+    from . import prs as _prs, repo as _repo
+    pr_cache, roots, hand = {}, {}, _prs.manual()
     for row in store.sessions(con, None, 20000):
         if (row["repo"] or "").startswith(("replay/", "local/")):
             continue
-        mark = f"{row['last_event']}:{row['steps']}:{row['tags']}"
+        base = f"{row['last_event']}:{row['steps']}:{row['tags']}"
+        old = st["pushed"].get(row["id"]) or ""
+        if not full and old.startswith(base + ":") and (row["started"] or 0) < time.time() - 30 * 86400:
+            continue  # unchanged, and too old for its PR to still be moving
+        evs = store.events(con, row["id"])
+        slug = row["repo"] or ""
+        if slug not in pr_cache:
+            pr_cache[slug], roots[slug] = _prs.cached(slug)[0], _repo.known_root(slug)
+        try:
+            pr, how = _prs.link(slug, row["id"], evs, row["started"], pr_cache[slug], roots[slug], hand)
+        except Exception:
+            pr, how = None, ""
+        pr_out = {"number": pr.get("number"), "state": pr.get("state") or "", "how": how} if pr and pr.get("number") else None
+        mark = f"{base}:{pr_out and pr_out['number']}:{pr_out and pr_out['state']}"
         if not full and st["pushed"].get(row["id"]) == mark:
             continue
-        evs = store.events(con, row["id"])
         flags = detectors.detect(evs)
         stp = {s["step"]: s for s in detectors.steps(evs)}
         folders = sorted({str(Path(p).parent) + "/" for f in flags for k in range(f["step_from"], f["step_to"] + 1)
@@ -306,7 +363,8 @@ def payload(full: bool = False) -> dict:
                                            and e.get("rule_id")}),
                          "folders": folders[:10], "verified": (oc or {}).get("verified"), "cost": (oc or {}).get("cost_usd"),
                          "tokens": sum(int(u.get(k) or 0) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens",
-                                                                     "cache_creation_input_tokens"))})
+                                                                     "cache_creation_input_tokens")),
+                         "pr": pr_out, "held_out": bool(row["held_out"])})
     con.close()
     rule_rows = []
     from .cli import _rule_usage

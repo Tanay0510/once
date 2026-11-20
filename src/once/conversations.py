@@ -15,7 +15,7 @@ from datetime import datetime
 from . import detectors, redact
 
 _CACHE: dict = {}
-MAX_BYTES = 40_000_000
+MAX_BYTES = 300_000_000  # read line by line; only the text is kept
 MAX_TEXT = 20_000
 
 

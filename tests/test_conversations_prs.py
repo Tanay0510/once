@@ -269,3 +269,55 @@ def test_a_too_big_gh_query_falls_back_and_a_failure_is_shown(env, monkeypatch):
     run_hook({"session_id": "e1", "cwd": str(env["repo"]), "hook_event_name": "SessionStart"})
     store.sync(con)
     assert "GitHub did not answer" in ui.view_prs(con, SLUG) and "Bad credentials" in ui.view_prs(con, SLUG)
+
+
+def test_the_collector_gets_pr_links_and_the_ship_comparison(env, tmp_path):
+    from once import collector
+    repo = env["repo"]
+    cli.main(["init", "--yes"])
+    claude_session(repo, tmp_path)
+    cache = prs._cache_file(SLUG)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps({"fetched": time.time(), "prs": [{"number": 482, "url": "https://github.com/Acme/API/pull/482",
+                                                                    "state": "merged", "head": "x", "commits": []}]}))
+    srv = collector.serve(tmp_path / "coll", token="t")
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        assert cli.main(["collector", "connect", f"http://127.0.0.1:{srv.server_address[1]}", "--token", "t", "--name", "ana"]) == 0
+        body = collector.payload()
+        s = body["sessions"][0]
+        assert s["pr"] == {"number": 482, "state": "merged", "how": "gh pr create"} and s["held_out"] is False
+        assert "github.com/Acme/API/pull" not in json.dumps({k: v for k, v in s.items() if not k.startswith("_")})
+        assert cli.main(["collector", "push"]) == 0 and collector.payload()["sessions"] == []  # nothing new
+        cache.write_text(json.dumps({"fetched": time.time(), "prs": [{"number": 482, "url": "https://github.com/Acme/API/pull/482",
+                                                                        "state": "closed", "head": "x", "commits": []}]}))
+        assert collector.payload()["sessions"][0]["pr"]["state"] == "closed"  # a PR that changes state is sent again
+        cli.main(["collector", "push"])
+        sm = collector._call("GET", "/v1/summary")
+        assert sm["agents"]["claude-code"]["linked"] == 1 and sm["shipping"]["without rules"]["linked"] == 1
+    finally:
+        srv.shutdown()
+    rows = [{"rules_given": ["r1"], "held_out": 0, "steps": 10, "pr": {"state": "merged"}},
+            {"rules_given": ["r1"], "held_out": 0, "steps": 30, "pr": {"state": "merged"}},
+            {"rules_given": [], "held_out": 1, "steps": 50, "pr": {"state": "merged"}},
+            {"rules_given": ["r1"], "held_out": 1, "steps": 5, "pr": None}]
+    sh = collector.shipping(rows)
+    assert sh["with rules"] == {"sessions": 2, "linked": 2, "merged": 2, "merged_steps": 40, "merged_rate": 1.0, "steps_per_merged": 20.0}
+    assert sh["without rules"]["sessions"] == 2 and sh["without rules"]["merged_rate"] == 0.5
+
+
+def test_an_old_collector_database_gains_the_new_columns(tmp_path):
+    import sqlite3 as sq
+    from once import collector
+    d = tmp_path / "c"
+    d.mkdir()
+    con = sq.connect(d / "collector.db")
+    con.execute("CREATE TABLE sessions(dev TEXT, sid TEXT, repo TEXT, agent TEXT, started REAL, steps INTEGER, flags TEXT, "
+                "avoidable REAL, rules_given TEXT, broken TEXT, folders TEXT, verified INTEGER, cost REAL, tokens INTEGER, "
+                "received REAL, PRIMARY KEY(dev, sid))")
+    con.commit()
+    con.close()
+    c = collector._db(d)
+    collector.ingest(c, {"developer": "bo", "sessions": [{"sid": "x", "repo": "r", "agent": "codex", "started": time.time(),
+                                                          "pr": {"number": 3, "state": "open", "how": "branch"}}]})
+    assert collector.summary(c)["agents"]["codex"]["linked"] == 1
