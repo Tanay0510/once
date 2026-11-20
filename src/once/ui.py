@@ -1,6 +1,6 @@
 """The local web viewer: server-rendered HTML, no build step, bound to 127.0.0.1.
 
-Screens: Live, Sessions (with tagging), Overview, Rules, Review. An app shell (sidebar, compact
+Screens: Live, Sessions (with tagging), Conversations, Pull requests, Overview, Rules, Review. An app shell (sidebar, compact
 headers, panels) in the palette of the demo video: Geist for text, Geist Mono for data, amber
 for once itself, rose for trouble, mint for success. Fonts are bundled, so nothing is fetched
 from the network. Writes need the per-process token, so another page in
@@ -16,12 +16,13 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import detectors, index, paths, redact, rules, snapshot, store
+from . import conversations, detectors, index, paths, prs, redact, rules, snapshot, store
 
 TOKEN = secrets.token_urlsafe(18)
 ACTIVE_SECS = 300
 TAGS = [("wrong", "Wrong"), ("avoidable", "Avoidable"), ("missing_knowledge", "Needs context"), ("good", "Good")]
-SCREENS = [("live", "Live"), ("sessions", "Sessions"), ("overview", "Overview"), ("rules", "Rules"), ("review", "Review")]
+SCREENS = [("live", "Live"), ("sessions", "Sessions"), ("conversations", "Conversations"), ("prs", "Pull requests"),
+           ("overview", "Overview"), ("rules", "Rules"), ("review", "Review")]
 FONTS = Path(__file__).parent / "assets" / "fonts"
 
 CSS = """
@@ -56,6 +57,14 @@ h1{font:600 20px/1.2 var(--sans);letter-spacing:-.01em;margin:0}
 .sum{color:var(--muted);margin-top:4px}
 .hint{color:var(--faint);font-size:13px;margin:-8px 0 16px}
 .repos{font:12.5px var(--mono);color:var(--faint);text-align:right;white-space:nowrap}
+.repopick{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--faint)}
+.repopick select{font:12.5px var(--mono);color:var(--ink);background:var(--raise);border:1px solid var(--edge);border-radius:8px;
+ padding:7px 30px 7px 10px;min-height:34px;max-width:min(340px,70vw);appearance:none;-webkit-appearance:none;cursor:pointer;
+ background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+ background-position:calc(100% - 15px) 50%,calc(100% - 10px) 50%;background-size:5px 5px;background-repeat:no-repeat}
+.repopick select:hover{border-color:rgba(243,241,236,.3)}.repopick select:focus{outline:none;border-color:rgba(233,162,59,.6)}
+.tools{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:10px}.tools .search input[type=text]{width:220px}
+.top>div:first-child{min-width:0;flex:1 1 280px}
 .repos a{color:var(--faint);text-decoration:none}.repos a:hover{color:var(--ink)}.repos b{color:var(--ink);font-weight:500}.repos .sep{color:var(--ghost);margin:0 7px}
 
 /* panels */
@@ -191,9 +200,42 @@ details.fd>summary .p{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
 .checks div{display:grid;grid-template-columns:18px 140px minmax(0,1fr);gap:8px;font-size:13px;align-items:baseline}
 .checks .d{font:12.5px var(--mono);color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-@media (max-width:900px){.cols,.cols.even,.cols.list{grid-template-columns:minmax(0,1fr)}}
+/* conversations */
+.thread{display:flex;flex-direction:column;gap:12px;padding:16px 18px 20px}
+.cv{max-width:86%;min-width:0}.cv .who{font:11.5px var(--mono);color:var(--faint);margin-bottom:3px}
+.cv .tx{white-space:pre-wrap;word-break:break-word}
+.cv.u{align-self:flex-end;max-width:78%;background:#1F1F23;border:1px solid var(--line);border-radius:12px 12px 4px 12px;padding:10px 14px}
+.cv.c{border-color:rgba(233,162,59,.45);background:rgba(233,162,59,.07)}.cv.c .who{color:var(--amber)}
+.cv.a .tx{color:#E6E3DC}
+details.cvs{border-radius:9px;background:rgba(0,0,0,.25);border:1px solid var(--line)}details.cvs.bad{border-color:rgba(240,138,126,.4)}
+details.cvs>summary{cursor:pointer;list-style:none;padding:8px 12px;font:12.5px var(--mono);color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 10px}
+details.cvs>summary::-webkit-details-marker{display:none}details.cvs>summary b{color:var(--ink);font-weight:500}
+details.cvs .ln{padding:0 12px;font:12.5px/1.75 var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+details.cvs .ln:last-of-type{padding-bottom:8px}details.cvs .ln a{color:var(--ghost);text-decoration:none;margin-right:8px}
+details.cvs .ln.bad{color:var(--rose)}
+.cvflag{padding:8px 12px;border-top:1px solid rgba(240,138,126,.3);color:var(--rose);font-size:13px}
+.clist .card .t{display:flex;gap:8px;align-items:center}.clist .card .t b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.clist .card .l{display:block;margin-top:3px;color:var(--muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.day{font:500 12px var(--sans);color:var(--faint);margin:12px 2px 8px}.day:first-child{margin-top:0}
+.convhd{padding:14px 18px;border-bottom:1px solid var(--line)}.convhd .r{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.convhd h2{margin:0;font:500 16px/1.35 var(--sans);flex:1 1 260px;min-width:0}
+a.btn{font:500 13px var(--sans);border-radius:8px;padding:7px 14px;border:1px solid var(--edge);background:var(--raise);color:var(--ink);text-decoration:none}
+a.btn:hover{border-color:rgba(243,241,236,.3)}
+form.inline{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.search{display:flex;gap:8px;align-items:center}.search input[type=text]{width:260px;max-width:60vw}
+/* pull requests */
+.prcard .hd{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.prcard .hd .ttl{font-weight:500;font-size:15px;text-decoration:none;color:var(--ink)}.prcard .hd .ttl span{font-family:var(--mono);color:var(--muted)}
+.prcard .hd .ttl:hover{color:var(--amber)}
+.prcard .hd .meta{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:12px;font:12.5px var(--mono);color:var(--muted)}
+.linkf input[type=text]{width:170px;padding:6px 9px}
+.scroll{overflow-x:auto}
+
+@media (max-width:900px){.cols,.cols.even,.cols.list{grid-template-columns:minmax(0,1fr)}
+ .convcols>div:last-child{order:-1}}
 @media (max-width:700px){
- .app{grid-template-columns:1fr;background:none}aside{background:var(--side);border-bottom:1px solid var(--line);position:static;height:auto;flex-direction:row;align-items:center;gap:4px;padding:8px;overflow-x:auto}
+ .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr;background:none}aside nav a{white-space:nowrap}
+ .repos{white-space:normal}.repos a,.repos b{white-space:nowrap}.search input[type=text]{width:auto;flex:1;min-width:0}.search{width:100%}aside{background:var(--side);border-bottom:1px solid var(--line);position:static;height:auto;flex-direction:row;align-items:center;gap:4px;padding:8px;overflow-x:auto}
  .brand{padding:4px 8px}aside nav{display:flex;gap:2px}aside nav a.on:before{display:none}aside .foot{display:none}
  main{padding:16px 14px 40px}.top{flex-direction:column;align-items:flex-start}.repos{text-align:left}.rows .opt{display:none}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -238,7 +280,7 @@ def _waiting(slug) -> int:
 KEYS_JS = """<script>(()=>{const items=()=>[...document.querySelectorAll('[data-k]')];let i=-1;
 function sel(n){const it=items();if(!it.length)return;i=Math.max(0,Math.min(it.length-1,n));it.forEach(e=>e.classList.remove('ksel'));
 const e=it[i];e.classList.add('ksel');e.scrollIntoView({block:'nearest'})}
-const nav={'1':'/live','2':'/sessions','3':'/overview','4':'/rules','5':'/review'};
+const nav={'1':'/live','2':'/sessions','3':'/conversations','4':'/prs','5':'/overview','6':'/rules','7':'/review'};
 const tags={w:'wrong',a:'avoidable',m:'missing_knowledge',g:'good'};
 document.addEventListener('keydown',ev=>{if(ev.target.closest('input,textarea,select')||ev.metaKey||ev.ctrlKey||ev.altKey)return;
 const k=ev.key;if(k==='j'){sel(i+1);ev.preventDefault()}else if(k==='k'){sel(i-1);ev.preventDefault()}
@@ -248,7 +290,7 @@ else if(tags[k]&&document.getElementById('tagform')){const f=document.getElement
 if(e&&e.dataset.step){if(!(ev.shiftKey&&f.lo.value))f.lo.value=e.dataset.step;f.hi.value=e.dataset.step}
 const r=f.querySelector('input[value="'+tags[k]+'"]');if(r)r.checked=true;const d=f.closest('details');if(d)d.open=true;f.note.focus();ev.preventDefault()}
 else if(k==='?'){document.getElementById('keys').toggleAttribute('hidden')}})})();</script>"""
-KEYS_HELP = ('<div id="keys" hidden><b>j / k</b> move<br><b>Enter</b> open<br><b>1 to 5</b> Live, Sessions, Overview, Rules, Review'
+KEYS_HELP = ('<div id="keys" hidden><b>j / k</b> move<br><b>Enter</b> open<br><b>1 to 7</b> Live, Sessions, Conversations, Pull requests, Overview, Rules, Review'
              '<br><b>w a m g</b> tag the selected step: wrong, avoidable, missing, good<br><b>⇧ + w…</b> extend the range'
              '<br><b>?</b> this help</div>')
 
@@ -273,11 +315,17 @@ def head(screen: str, summary: str = "", hint: str = "", repos: str = "", stamp:
             + f"</div>{repos}</div>" + (f'<p class="hint">{hint}</p>' if hint else ""))
 
 
-def repo_bar(con, repo: str | None, base: str) -> str:
+def repo_bar(con, repo: str | None, base: str, keep: dict | None = None, allow_all: bool = True) -> str:
+    """A repo picker: a plain GET form, so it works without JavaScript; with it, picking a repo goes there at once."""
     found = [r[0] for r in con.execute("SELECT DISTINCT repo FROM sessions WHERE repo NOT LIKE 'replay/%' ORDER BY repo")]
-    items = ([f'<a href="{base}">all repos</a>'] if repo else ["<b>all repos</b>"]) + [
-        f'<a href="{base}?repo={urllib.parse.quote(r)}">{e(r)}</a>' if r != repo else f"<b>{e(r)}</b>" for r in found]
-    return '<div class="repos">' + '<span class="sep">·</span>'.join(items) + "</div>"
+    if repo and repo not in found:
+        found.append(repo)
+    opts = (f'<option value=""{" selected" if not repo else ""}>All repos</option>' if allow_all else "") + "".join(
+        f'<option value="{e(r)}"{" selected" if r == repo else ""}>{e(r)}</option>' for r in found)
+    hidden = "".join(f'<input type=hidden name="{e(k)}" value="{e(v)}">' for k, v in (keep or {}).items() if v)
+    return (f'<form class="repopick" method=get action="{e(base)}">{hidden}<label for="repo-pick">Repo</label>'
+            f'<select id="repo-pick" name=repo onchange="this.form.submit()">{opts}</select>'
+            '<noscript><button>Go</button></noscript></form>')
 
 
 def window(title: str, body: str, right: str = "", foot: str = "", pad: bool = True) -> str:
@@ -621,6 +669,30 @@ def _tag_form(sid, lo, hi, det="", pre="avoidable", fixed=False, form_id=""):
             f'<div class="actions"><button class="pri">Save tag</button></div></form>')
 
 
+def _session_pr_box(row, evs) -> str:
+    from . import repo as repo_
+    try:
+        pr, how = prs.link(row["repo"] or "", row["id"], evs, row["started"], prs.cached(row["repo"] or "")[0],
+                           repo_.known_root(row["repo"] or ""))
+    except Exception:
+        pr, how = None, ""
+    back = f"/session/{urllib.parse.quote(row['id'])}"
+    hidden = (f'<input type=hidden name=token value="{TOKEN}"><input type=hidden name=sid value="{e(row["id"])}">'
+              f'<input type=hidden name=back value="{e(back)}">')
+    by_hand = row["id"] in prs.manual()
+    if pr:
+        body = (f'<p>{_pr_chip(pr)} <a href="{e(pr["url"])}" target="_blank" rel="noopener">#{e(pr.get("number"))} '
+                f'{e(pr.get("title") or "")}</a></p><p class="faint" style="font-size:13px">Linked by {e(how)}.</p>'
+                + (f'<form method=post action="/prs/link" class="actions">{hidden}<button name=action value="none">Not this PR</button>'
+                   + ('<button name=action value="auto">Link automatically</button>' if by_hand else "") + "</form>"))
+    else:
+        body = ('<p>No PR found for this session yet.</p>' + (
+            f'<form method=post action="/prs/link" class="actions">{hidden}<button name=action value="auto">Link automatically</button></form>'
+            if by_hand else ""))
+    return (f'<div class="box"><h3>Pull request</h3>{body}<div style="margin-top:10px">'
+            f'{_link_form(row["id"], back, label="Link another" if pr else "Link")}</div></div>')
+
+
 def view_session(con, sid):
     row = con.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
     if not row:
@@ -657,6 +729,7 @@ def view_session(con, sid):
         side += '<div class="box"><h3>Rules enforced</h3>' + "".join(
             f'<p><span class="chip amb">{e(ev.get("level"))}</span> <span class="mono">{e(ev.get("rule_id"))}</span>: '
             f'{e(words.get(ev.get("level"), ""))}{" · " + e(ev["path"]) if ev.get("path") else ""}</p>' for ev in enf) + "</div>"
+    side = _session_pr_box(row, evs) + side
     blockers = [ev for ev in evs if ev.get("event") == "blocker"]
     if blockers:
         side += '<div class="box"><h3>Blockers the agent recorded</h3>' + "".join(f'<p>{e(b.get("note"))}</p>' for b in blockers) + "</div>"
@@ -667,7 +740,8 @@ def view_session(con, sid):
             + (f" · <span class='rose'>{pct}% avoidable</span>" if flags else "")
             + (f" · rules given: <span class='mono'>{e(', '.join(given))}</span>" if given else " · no rules given"))
     q = _q(row["repo"])
-    crumbs = f'<div class="repos"><a href="/sessions{q}">← sessions</a><span class="sep">·</span><b>{e(row["repo"])}</b></div>'
+    crumbs = (f'<div class="repos"><a href="/sessions{q}">← sessions</a><span class="sep">·</span>'
+              f'<a href="/conversations{_q(row["repo"], sid=row["id"])}">read the conversation</a><span class="sep">·</span><b>{e(row["repo"])}</b></div>')
     body = (head("Session", lede, f'<span style="color:var(--ink)">{title}</span>', crumbs)
             + '<div class="cols"><div>'
             + window("Timeline", timeline_html(evs, flags, notes), plural(row["steps"] or 0, "step"),
@@ -853,7 +927,7 @@ def view_rules(con, repo, rid, cwd_slug, only_candidates=False, msg: str | None 
                           if cur != "block" else "")
                        + f'<form method=post action="/rules/drop">{hid}<button>Retire</button></form></div></div>')
         detail += impact_html(rule_impact(con, slug, sel)) + _evidence(sel)
-    crumbs = f'<div class="repos"><b>{e(slug)}</b></div>'
+    crumbs = repo_bar(con, slug, "/review" if only_candidates else "/rules", allow_all=False) if slug else ""
     if msg:
         detail = f'<div class="msg">{e(msg)}</div>' + detail
     if only_candidates and not all_rules:
@@ -995,6 +1069,298 @@ def view_overview(con, repo, trend="avoidable"):
     return page("Overview", "overview", body, repo)
 
 
+# ---------------------------------------------------------------- pull requests and conversations
+
+PR_TONE = {"merged": "mint", "open": "amb", "closed": ""}
+
+
+def _real_sessions(con, repo, limit=300):
+    return [r for r in store.sessions(con, repo, limit) if not (r["repo"] or "").startswith("replay/")]
+
+
+def _length(r) -> str:
+    m = max(0, round(((r["last_event"] or 0) - (r["started"] or 0)) / 60))
+    return f"{m // 60}h {m % 60}m" if m >= 60 else f"{max(m, 1)}m"
+
+
+def _pr_links(con, rows, commits: bool = True):
+    """[(row, events, pr or None, how)] for these sessions, from the cache only: GitHub is never waited on."""
+    slugs = sorted({r["repo"] for r in rows if r["repo"]})
+    cache = {s: prs.cached(s)[0] for s in slugs}
+    roots = {}
+    if commits:
+        from . import repo as repo_
+        roots = {s: repo_.known_root(s) for s in slugs}
+    hand = prs.manual()
+    out = []
+    for r in rows:
+        evs = store.events(con, r["id"])
+        try:
+            pr, how = prs.link(r["repo"] or "", r["id"], evs, r["started"], cache.get(r["repo"], []), roots.get(r["repo"]), hand)
+        except Exception:
+            pr, how = None, ""
+        out.append((r, evs, pr, how))
+    return out
+
+
+def _pr_chip(pr) -> str:
+    st = pr.get("state") or ""
+    return f'<span class="chip {PR_TONE.get(st, "")}">{e(st or "PR")}</span>'
+
+
+def _pr_label(pr) -> str:
+    return f"#{pr.get('number')}" + (f" {pr['state']}" if pr.get("state") else "")
+
+
+def _link_form(sid, back, value="", label="Link") -> str:
+    return (f'<form class="inline linkf" method=post action="/prs/link"><input type=hidden name=token value="{TOKEN}">'
+            f'<input type=hidden name=sid value="{e(sid)}"><input type=hidden name=back value="{e(back)}">'
+            f'<input type=text name=ref value="{e(value)}" placeholder="PR number or link" aria-label="PR number or link">'
+            f'<button>{e(label)}</button></form>')
+
+
+def view_prs(con, repo, state: str | None = None, msg: str | None = None):
+    rows = _real_sessions(con, repo)
+    slugs = sorted({r["repo"] for r in rows if r["repo"]})
+    for s in slugs:
+        prs.refresh_async(s)
+    linked = _pr_links(con, rows)
+    groups: dict = {}
+    loose = []
+    for r, evs, pr, how in linked:
+        if pr and pr.get("url"):
+            g = groups.setdefault(pr["url"].lower(), {"pr": pr, "sessions": [], "last": 0})
+            g["sessions"].append((r, how))
+            g["last"] = max(g["last"], r["started"] or 0)
+        else:
+            loose.append(r)
+    allg = sorted(groups.values(), key=lambda g: -g["last"])
+    count = lambda st: sum(1 for g in allg if g["pr"].get("state") == st)
+    shown = [g for g in allg if not state or g["pr"].get("state") == state]
+    flagged_merged = sum(r["flags"] or 0 for g in allg if g["pr"].get("state") == "merged" for r, _ in g["sessions"])
+    n_linked = sum(len(g["sessions"]) for g in allg)
+
+    gh = prs.gh_available()
+    fetched = [prs.cached(s)[1] for s in slugs if s.startswith("github.com/")]
+    errs = [(s, prs.last_error(s)) for s in slugs if s.startswith("github.com/") and prs.last_error(s)]
+    if gh and errs:
+        status = (f"GitHub did not answer for {e(errs[0][0])}: {e(errs[0][1][0])} · "
+                  f"<a href='/prs{_q(repo, state=state, refresh=1)}'>try again</a>")
+    elif not gh:
+        status = ("<code>gh</code> is not installed, so titles, state and checks are missing. "
+                  "PR links the agents printed still show. Install GitHub's CLI and run <code>gh auth login</code>.")
+    elif not [f for f in fetched if f]:
+        status = "Asking GitHub for this repo's pull requests. Reload in a few seconds." if fetched else ""
+    else:
+        status = f"Checked GitHub {ago(min(f for f in fetched if f))} · <a href='/prs{_q(repo, state=state, refresh=1)}'>check now</a>"
+    tiles = (f'<div class="tiles"><div class="tile"><span>Merged</span><b>{count("merged")}</b></div>'
+             f'<div class="tile"><span>Open</span><b>{count("open")}</b></div>'
+             f'<div class="tile"><span>Sessions linked to a PR</span><b>{n_linked} of {len(rows)}</b></div>'
+             f'<div class="tile"><span>Flagged steps behind merged PRs</span><b class="{"rose" if flagged_merged else ""}">{flagged_merged}</b></div></div>')
+    from .collector import shipping
+    ship = shipping([{"rules_given": sorted({i for ev in evs if ev.get("event") == "rule_injected" for i in ev.get("rule_ids", [])}),
+                      "held_out": r["held_out"], "steps": r["steps"],
+                      "pr": {"state": pr.get("state")} if pr else None} for r, evs, pr, _ in linked])
+    ship_html = ""
+    if len(ship) == 2 and any(v["merged"] for v in ship.values()):
+        pct = lambda v: "–" if v is None else f"{100 * v:.0f}%"
+        ship_html = window("Did rules help ship?", '<table class="rows"><thead><tr><th>Sessions</th><th>Count</th>'
+                           '<th>Led to a merged PR</th><th>Steps per merged session</th></tr></thead><tbody>' + "".join(
+                               f'<tr><td>{e(k)}</td><td class="n">{v["sessions"]}</td><td class="n">{v["merged"]} ({pct(v["merged_rate"])})</td>'
+                               f'<td class="n">{v["steps_per_merged"] or "–"}</td></tr>' for k, v in sorted(ship.items())) + "</tbody></table>",
+                           "not a controlled test unless a hold-out is set", pad=False)
+    seg = '<div class="seg" role="group" aria-label="Filter by state" style="margin-bottom:14px">' + "".join(
+        f'<a href="/prs{_q(repo, state=k)}" class="{"on" if (state or "") == k else ""}"'
+        f'{" aria-current=true" if (state or "") == k else ""}>{n} {c}</a>'
+        for k, n, c in (("", "All", len(allg)), ("open", "Open", count("open")), ("merged", "Merged", count("merged")),
+                        ("closed", "Closed", count("closed")))) + "</div>"
+    cards = ""
+    for g in shown:
+        pr = g["pr"]
+        meta = []
+        if pr.get("checks"):
+            tone = {"passing": "mint", "failing": "rose", "pending": "amb"}[pr["checks"]]
+            meta.append(f'<span class="{tone}">● checks {e(pr["checks"])}</span>')
+        if pr.get("additions") is not None:
+            meta.append(f'<span><span class="add">+{e(pr["additions"])}</span> <span class="del">−{e(pr.get("deletions") or 0)}</span></span>')
+        when = (f"merged {ago(pr['merged'])}" if pr.get("merged") else f"closed {ago(pr['closed'])}" if pr.get("closed")
+                else f"opened {ago(pr['created'])}" if pr.get("created") else "")
+        if when:
+            meta.append(f"<span>{e(when)}</span>")
+        meta.append(f'<a href="{e(pr["url"])}" target="_blank" rel="noopener" style="font:500 12.5px var(--sans);color:var(--amber)">Open on GitHub ↗</a>')
+        trs = ""
+        for r, how in sorted(g["sessions"], key=lambda x: x[0]["started"] or 0):
+            href = f"/conversations{_q(r['repo'], sid=r['id'])}"
+            num = lambda v: f'{v}' if v else '<span class="zero">0</span>'
+            trs += (f'<tr data-k data-href="{href}" onclick="location.href=\'{href}\'">'
+                    f'<td class="p" style="color:var(--ink)"><a href="{href}" style="text-decoration:none">{e(detectors._short(r["prompt"], 90)) or "no prompt"}</a></td>'
+                    f'<td><span class="chip">{e(r["agent"])}</span></td><td class="n">{num(r["steps"])}</td>'
+                    f'<td class="n{" rose" if r["flags"] else ""}">{num(r["flags"])}</td><td class="n">{_length(r)}</td>'
+                    f'<td class="n opt">{e(_when(r["started"]))}</td><td><span class="chip">{e(how)}</span></td></tr>')
+        title = pr.get("title") or ("" if pr.get("state") else "title unknown until gh answers")
+        cards += (f'<section class="win prcard"><div class="hd">{_pr_chip(pr)}'
+                  f'<a class="ttl" href="{e(pr["url"])}" target="_blank" rel="noopener"><span>#{e(pr.get("number"))}</span> {e(title)}</a>'
+                  + (f'<span class="mono faint" style="font-size:12px">{e(pr["head"])}</span>' if pr.get("head") else "")
+                  + f'<span class="meta">{"".join(meta)}</span></div><div class="scroll"><table class="rows" style="min-width:760px">'
+                  '<thead><tr><th>Session</th><th>Agent</th><th>Steps</th><th>Flags</th><th>Length</th><th class="opt">Started</th>'
+                  f'<th>Linked by</th></tr></thead><tbody>{trs}</tbody></table></div></section>')
+    if not shown:
+        cards = window("Pull requests", '<div class="empty">' + (
+            "No PRs in this state." if allg else
+            "No session is linked to a PR yet. Sessions are linked when the agent runs <code>gh pr create</code>, "
+            "when they worked on a PR's branch or made one of its commits, or when you link one below.") + "</div>", pad=False)
+    back = f"/prs{_q(repo, state=state)}"
+    ltr = "".join(
+        f'<tr><td class="p" style="color:var(--ink)"><a href="/conversations{_q(r["repo"], sid=r["id"])}" style="text-decoration:none">'
+        f'{e(detectors._short(r["prompt"], 80)) or "no prompt"}</a></td><td><span class="chip">{e(r["agent"])}</span></td>'
+        f'<td class="n opt">{e(_branch(evs_by.get(r["id"], [])))}</td><td class="n">{e(ago(r["started"]))}</td>'
+        f'<td style="text-align:right">{_link_form(r["id"], back)}</td></tr>'
+        for evs_by in [{x[0]["id"]: x[1] for x in linked}] for r in loose[:20])
+    loose_html = window("Sessions with no PR yet", f'<div class="scroll"><table class="rows" style="min-width:640px"><tbody>{ltr}</tbody></table></div>',
+                        f"{plural(len(loose), 'session')}" + (" · newest 20" if len(loose) > 20 else ""), pad=False) if loose else ""
+    note = f'<div class="msg">{e(msg)}</div>' if msg else ""
+    summary = f"{plural(len(allg), 'PR')} made with an agent · {n_linked} of {plural(len(rows), 'session')} linked"
+    body = (head("Pull requests", e(summary), status, repo_bar(con, repo, "/prs", {"state": state})) + note + tiles + seg + cards + ship_html + loose_html)
+    return page("Pull requests", "prs", body, repo)
+
+
+def _branch(evs) -> str:
+    sig = prs.session_signals(evs)
+    work = [b for b in sig["branches"] if b not in prs.DEFAULT_BRANCHES]
+    return (work or sig["branches"] or [""])[-1]
+
+
+def _day(ts) -> str:
+    d = time.localtime(ts or 0)
+    today = time.localtime()
+    if (d.tm_year, d.tm_yday) == (today.tm_year, today.tm_yday):
+        return "Today"
+    y = time.localtime(time.time() - 86400)
+    if (d.tm_year, d.tm_yday) == (y.tm_year, y.tm_yday):
+        return "Yesterday"
+    return time.strftime("%a %b %d", d)
+
+
+def _cost(evs, model) -> str:
+    try:
+        from . import cost
+        end = next((ev for ev in reversed(evs) if ev.get("event") == "session_end" and ev.get("usage")), None)
+        if not end:
+            return ""
+        usd = cost.dollars(end["usage"], model, cost.load_prices())
+        return f"${usd:.2f}" if usd is not None else ""
+    except Exception:
+        return ""
+
+
+AGENTS = [("", "All"), ("claude-code", "Claude Code"), ("codex", "Codex"), ("antigravity", "Antigravity")]
+
+
+def view_conversations(con, repo, sid=None, agent=None, q=None):
+    rows = [r for r in _real_sessions(con, repo) if r["prompt"] or r["steps"] or r["id"] == sid]  # nothing was said: skip
+    if agent:
+        rows = [r for r in rows if r["agent"] == agent]
+    if q:
+        rows = [r for r in rows if conversations.search_hit(store.events(con, r["id"]), r["id"], r["agent"] or "", q)]
+    rows = rows[:120]
+    sel = next((r for r in rows if r["id"] == sid), None) if sid else (rows[0] if rows else None)
+    if sid and not sel:
+        sel = con.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
+    linked = {r["id"]: (pr, how) for r, _, pr, how in _pr_links(con, rows, commits=False)}
+    items_html, day = "", None
+    for r in rows:
+        d = _day(r["started"])
+        if d != day:
+            items_html += f'<div class="day">{e(d)}</div>'
+            day = d
+        pr = linked.get(r["id"], (None, ""))[0]
+        on = sel is not None and r["id"] == sel["id"]
+        href = f"/conversations{_q(repo, agent=agent, q=q, sid=r['id'])}"
+        items_html += (f'<a data-k class="card{" on" if on else ""}" href="{href}"{" aria-current=true" if on else ""}>'
+                       f'<span class="t"><b>{e(detectors._short(r["prompt"], 90)) or "no prompt"}</b>{ROSEDOT if r["flags"] else ""}</span>'
+                       f'<span class="meta">{e(r["agent"])} · {plural(r["steps"] or 0, "step")} · {e(ago(r["started"]))}'
+                       + (f' · <span class="mint">{e(_pr_label(pr))}</span>' if pr else "") + "</span></a>")
+    pills = '<div class="seg" role="group" aria-label="Filter by agent" style="margin-bottom:12px">' + "".join(
+        f'<a href="/conversations{_q(repo, agent=k, q=q)}" class="{"on" if (agent or "") == k else ""}">{n}</a>' for k, n in AGENTS) + "</div>"
+    search = (f'<form class="search" method=get action="/conversations">'
+              + (f'<input type=hidden name=repo value="{e(repo)}">' if repo else "")
+              + (f'<input type=hidden name=agent value="{e(agent)}">' if agent else "")
+              + f'<input type=text name=q value="{e(q or "")}" placeholder="Words from a prompt or a reply" aria-label="Search conversations">'
+              f'<button>Search</button></form>')
+    if not rows:
+        lst = f'<div class="empty">{"Nothing matches." if q or agent else "No conversations captured yet."}</div>'
+    else:
+        lst = items_html
+    right = window("Conversation", '<div class="empty">Pick a conversation.</div>') if not sel else _conversation(con, sel, linked.get(sel["id"]))
+    summary = "Everything you and your agents said, across Claude Code, Codex and Antigravity"
+    hint = f"{plural(len(rows), 'conversation')} matching <b>{e(q)}</b>. <a href='/conversations{_q(repo, agent=agent)}'>Clear</a>" if q else ""
+    body = (head("Conversations", summary, hint, f'<div class="tools">{repo_bar(con, repo, "/conversations", {"agent": agent})}{search}</div>') + '<div class="cols list convcols"><div class="clist">' + pills + lst
+            + f"</div><div>{right}</div></div>")
+    return page("Conversations", "conversations", body, repo)
+
+
+def _conversation(con, r, link=None) -> str:
+    evs = store.events(con, r["id"])
+    items, have = conversations.thread(evs, r["id"], r["agent"] or "")
+    if link is None:
+        from . import repo as repo_
+        pr, how = prs.link(r["repo"] or "", r["id"], evs, r["started"], prs.cached(r["repo"] or "")[0], repo_.known_root(r["repo"] or ""))
+    else:
+        pr, how = link
+    who = (r["agent"] or "agent").split("-")[0].replace("claude", "Claude").replace("codex", "Codex").replace("antigravity", "Antigravity")
+    learned = []
+    try:
+        learned = [x for x in rules.load_all(r["repo"]) if r["id"] in ((x.get("provenance") or {}).get("source_sessions") or [])]
+    except Exception:
+        pass
+    out = []
+    for it in items:
+        t = time.strftime("%H:%M", time.localtime(it["ts"])) if it.get("ts") else ""
+        if it["kind"] == "user":
+            c = it.get("correction")
+            out.append(f'<div class="cv u{" c" if c else ""}"><div class="who">you{" · " + t if t else ""}{" · correction" if c else ""}</div>'
+                       f'<div class="tx">{e(it["text"])}</div>'
+                       + ("".join(f'<div class="mono amb" style="font-size:12px;margin-top:8px"><a href="/rules{_q(r["repo"], id=x["id"])}">became rule {e(x["id"])} →</a></div>'
+                                  for x in learned if (x.get("provenance") or {}).get("source_kind") == "chat") if c else "")
+                       + "</div>")
+        elif it["kind"] == "agent":
+            out.append(f'<div class="cv a"><div class="who">{e(who)}{" · " + t if t else ""}</div><div class="tx">{e(it["text"])}</div></div>')
+        else:
+            st = it["steps"]
+            kinds = {}
+            for s in st:
+                kinds[s.get("tool") or "other"] = kinds.get(s.get("tool") or "other", 0) + 1
+            gist = " · ".join(f"{k} ×{n}" if n > 1 else k for k, n in kinds.items())
+            bad = it["failed"] or it["flags"]
+            lines = "".join(
+                f'<div class="ln{" bad" if s.get("ok") is False else ""}"><a href="/session/{urllib.parse.quote(r["id"])}#s{s["step"]}">{s["step"]}</a>'
+                f'{e((s.get("tool") or "").ljust(6))} {e(detectors._short(s.get("target", ""), 110))}'
+                + (f' · {e(s.get("error_head") or "failed")}' if s.get("ok") is False else "") + "</div>" for s in st[:60])
+            if len(st) > 60:
+                lines += f'<div class="ln">{len(st) - 60} more steps on the timeline</div>'
+            flags = "".join(f'<div class="cvflag">Flagged: {e(f["detector"].replace("_", " "))}, {e(f.get("note", ""))}</div>' for f in it["flags"])
+            out.append(f'<details class="cvs{" bad" if bad else ""}"{" open" if bad else ""}><summary><b>{plural(len(st), "step")}</b>'
+                       f'<span>{e(gist)}</span>' + (f'<span class="rose">{it["failed"]} failed</span>' if it["failed"] else "")
+                       + f"</summary>{lines}{flags}</details>")
+    if not have:
+        out.insert(0, '<p class="faint" style="margin:0;font-size:13px">The agent\'s transcript is not on this machine any more, '
+                      'so only your prompts and the steps are shown.</p>')
+    if not out:
+        out = ['<div class="empty" style="padding:0">Nothing was said in this session.</div>']
+    title = detectors._short(r["prompt"], 140) or "No prompt"
+    md = conversations.as_markdown(items, title)
+    meta = [r["agent"] or "", r["model"] or "", plural(conversations.turns(evs), "turn"), plural(r["steps"] or 0, "step"),
+            _length(r), _cost(evs, r["model"]), _branch(evs), r["repo"] or ""]
+    prchip = (f'<a class="chip {PR_TONE.get(pr.get("state") or "", "")}" href="{e(pr["url"])}" target="_blank" rel="noopener" '
+              f'title="linked by {e(how)}" style="text-decoration:none">{e(_pr_label(pr))} ↗</a>') if pr else ""
+    hd = (f'<div class="convhd"><div class="r"><h2>{e(title)}</h2>{prchip}'
+          f'<a class="btn" href="/session/{urllib.parse.quote(r["id"])}">Open timeline</a>'
+          f'<button type=button onclick="navigator.clipboard.writeText(document.getElementById(\'md\').value);this.textContent=\'Copied\'">Copy as Markdown</button></div>'
+          f'<div class="facts" style="border:0;padding:0;margin-top:8px">{"".join(f"<span>{e(m)}</span>" for m in meta if m)}</div></div>'
+          f'<textarea id="md" hidden>{e(md)}</textarea>')
+    return f'<section class="win">{hd}<div class="thread">{"".join(out)}</div></section>'
+
+
 def make_handler(cwd_slug: str, refresh):
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -1049,6 +1415,16 @@ def make_handler(cwd_slug: str, refresh):
                     return self._send(200, view_rules(con, repo, q.get("id"), cwd_slug, only_candidates=True))
                 if u.path == "/overview":
                     return self._send(200, view_overview(con, repo, q.get("trend", "avoidable")))
+                if u.path == "/conversations":
+                    return self._send(200, view_conversations(con, repo, q.get("sid"), q.get("agent"), q.get("q")))
+                if u.path == "/prs":
+                    msg = q.get("msg")
+                    if q.get("refresh"):
+                        slugs = [repo] if repo else sorted({r["repo"] for r in _real_sessions(con, None) if r["repo"]})
+                        res = [prs.fetch(s) for s in slugs if s.startswith("github.com/")]
+                        msg = msg or "; ".join(m for ok, m in res if not ok) or None
+                    st = q.get("state") if q.get("state") in ("open", "merged", "closed") else None
+                    return self._send(200, view_prs(con, repo, st, msg))
                 return self._send(404, "Not found.")
             finally:
                 con.close()
@@ -1161,6 +1537,26 @@ def make_handler(cwd_slug: str, refresh):
                     msg = "\n".join(l for l in buf.getvalue().strip().splitlines() if l.strip())
                     return self._send(303, "", headers={"Location": f"/rules?id={urllib.parse.quote(f.get('id', ''))}"
                                                                    f"&repo={urllib.parse.quote(slug)}&msg={urllib.parse.quote(msg[:600])}"})
+                if self.path == "/prs/link":
+                    row = con.execute("SELECT * FROM sessions WHERE id=?", (f.get("sid"),)).fetchone()
+                    back = f.get("back") or "/prs"
+                    if not back.startswith("/") or back.startswith("//"):
+                        back = "/prs"
+                    if not row:
+                        return self._send(400, "No such session.")
+                    ref = (f.get("ref") or "").strip()
+                    if f.get("action") == "auto":
+                        prs.set_manual(row["id"], None)
+                    elif f.get("action") == "none":
+                        prs.set_manual(row["id"], "")
+                    else:
+                        url = prs.parse_ref(ref, row["repo"])
+                        if not url:
+                            sep = "&" if "?" in back else "?"
+                            return self._send(303, "", headers={"Location": back + sep + "msg=" + urllib.parse.quote(
+                                f"Not linked: {ref or 'nothing'} is not a PR number or a github.com pull request link.")})
+                        prs.set_manual(row["id"], url)
+                    return self._send(303, "", headers={"Location": back})
                 if self.path == "/rules/drop":
                     slug = f.get("slug") or cwd_slug
                     r = rules.find(slug, f.get("id", ""))

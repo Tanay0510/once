@@ -80,6 +80,7 @@ def parse(raw: dict, root: str | None) -> list[dict]:
         rel = _cc._rel(_path_arg(args), root)
         target = cmd or rel or args.get("Query") or args.get("query") or args.get("Pattern") or tool
         err = str(raw.get("error") or "")
+        res = None
         if kind == "shell" and not err:
             # agy's PostToolUse says nothing about a command's exit code; its transcript does, at this step.
             res = command_result(raw.get("transcript_path"), raw.get("step_idx"))
@@ -91,6 +92,8 @@ def parse(raw: dict, root: str | None) -> list[dict]:
         if kind == "shell":
             ev["command"] = str(cmd)[:500]
             ev["paths"], ev["writes"] = _cc.shell_paths(str(cmd), root)
+        if not failed:
+            _cc.pr_fields(ev, tool, str(cmd), res[1] if res else raw.get("tool_output"))
         if failed:
             ev["error_digest"], ev["error_head"] = _cc._digest(err)
             ev["error"] = err[-600:]

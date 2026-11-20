@@ -173,3 +173,39 @@ def test_connected_does_not_require_the_enforcement_group(env, capsys):
     capsys.readouterr()
     cli.main(["status"])
     assert "claude-code" in capsys.readouterr().out.splitlines()[0]
+
+
+def test_a_session_split_across_two_files_keeps_every_event(env):
+    """A repo that gains a remote mid-session writes the rest of the session to a second file."""
+    repo = env["repo"]
+    cli.main(["init", "--yes"])
+    for p in payloads(repo, "split")[:5]:
+        run_hook(p)
+    a = next(paths.local().joinpath("trajectories").rglob("split.jsonl"))
+    b = paths.local() / "trajectories" / "local" / "proj" / "split.jsonl"
+    b.parent.mkdir(parents=True, exist_ok=True)
+    lines = a.read_text().splitlines()
+    late = [json.loads(l) for l in lines[3:]]
+    a.write_text("\n".join(lines[:3]) + "\n")  # the first part, under the old name
+    b.write_text("\n".join(json.dumps({**e, "repo": "local/proj", "ts": e["ts"] - 3600}) for e in late) + "\n")
+    con = store.connect()
+    store.sync(con)
+    evs = store.events(con, "split")
+    assert len(evs) == len(lines) and [e["seq"] for e in evs] == list(range(len(lines)))
+    assert [e.get("ts") for e in evs] == sorted(e.get("ts") for e in evs)
+
+
+def test_an_old_index_is_rebuilt_with_the_new_keys(env):
+    repo = env["repo"]
+    cli.main(["init", "--yes"])
+    for p in payloads(repo, "old1"):
+        run_hook(p)
+    con = sqlite3.connect(paths.db())
+    con.executescript("DROP TABLE events; CREATE TABLE events(session_id TEXT, seq INTEGER, ts REAL, event TEXT, tool TEXT,"
+                      " target TEXT, ok INTEGER, raw TEXT, PRIMARY KEY(session_id, seq)); DELETE FROM files;"
+                      "INSERT INTO actions(ts, kind, payload) VALUES(1, 'teach', '{}');")
+    con.commit()
+    con.close()
+    con = store.connect()
+    store.sync(con)
+    assert store.sessions(con, SLUG)[0]["steps"] > 5 and store.last_action(con)["kind"] == "teach"
