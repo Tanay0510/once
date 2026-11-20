@@ -186,8 +186,12 @@ def checks_state(rollup) -> str:
 
 # ---------------------------------------------------------------- what a session did
 
+_GIT_WORK = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?(commit|push|merge|rebase|cherry-pick|checkout\s+-b|switch\s+-c|am)\b"
+                       r"|\bgh\s+pr\s+(create|merge|checkout)\b")
+
+
 def session_signals(evs: list[dict]) -> dict:
-    created, seen, branches, heads = [], [], [], []
+    created, seen, branches, heads, git_work = [], [], [], [], False
     for ev in evs:
         kind = ev.get("event")
         if kind in ("session_start", "git_state"):
@@ -197,11 +201,17 @@ def session_signals(evs: list[dict]) -> dict:
             h = ev.get("commit") if kind == "session_start" else ev.get("head")
             if h:
                 heads.append(h)
-        elif kind == "tool_result" and ev.get("pr_urls"):
-            for u in ev["pr_urls"]:
+        if kind == "tool_result":
+            for u in ev.get("pr_urls") or []:
                 (created if ev.get("pr_created") else seen).append(u)
+            if ev.get("ok") and _GIT_WORK.search(str(ev.get("command") or ev.get("target") or "")):
+                git_work = True
+    start, end = (heads[0], heads[-1]) if heads else ("", "")
     return {"created": list(dict.fromkeys(created)), "seen": [u for u in dict.fromkeys(seen) if u not in created],
-            "branches": branches, "start": heads[0] if heads else "", "end": heads[-1] if heads else ""}
+            "branches": branches, "start": start, "end": end,
+            # Being on a branch is not working on it: a session must have committed, run a git command that
+            # changes history, or moved onto the branch while it ran, before the branch links it to a PR.
+            "worked_on_branch": bool(git_work or (start and end and start != end) or len(branches) > 1)}
 
 
 def session_commits(root, start: str, end: str) -> set:
@@ -233,7 +243,7 @@ def link(slug: str, sid: str, evs: list[dict], started: float | None, prs: list[
     if sig["created"]:
         u = sig["created"][-1]
         return by_url.get(u.lower()) or from_url(u), "gh pr create"
-    work = [b for b in sig["branches"] if b not in DEFAULT_BRANCHES]
+    work = [b for b in sig["branches"] if b not in DEFAULT_BRANCHES] if sig["worked_on_branch"] else []
     if work:
         cands = sorted((p for p in prs if p.get("head") in work), key=lambda p: p.get("created") or 0)
         if cands:  # the same branch name can be reused: take the first PR opened after the session began

@@ -348,8 +348,8 @@ Verified on a real Mac with live agents (November 2026, about $0.25 of model spe
   2,000 sessions and 300 rules.
 
 Built and tested only with stand-ins:
-- **Codex:** everything. It was not installed on the test machine. The hooks and the session-log reader follow
-  its published reference.
+- **Codex:** capture, prompts, edits and the Conversations reader were seen working live with Codex 0.171. Not yet
+  seen: enforcement, and its end-of-turn hook (the session ended mid-turn).
 - **The interactive parts of Claude Code:** the status line, the agent asking about suggestions, slash
   commands. Also SwiftBar and the editor extension.
 - **Real-model learning:** `once learn` drafting with a real model, sweeps, experiments and regression at scale.

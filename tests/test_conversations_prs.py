@@ -351,3 +351,51 @@ def test_long_replies_are_shown_whole_and_still_masked(env, tmp_path):
                                                                                               "content": [{"type": "text", "text": long}]}}) + "\n")
     m = conversations.messages(str(t), "claude-code")[0]["text"]
     assert m.startswith("word word") and "the end [REDACTED]" in m and KEY not in m and "chars]" not in m
+
+
+def test_codex_0_171_session_log_without_chat_events(tmp_path):
+    """Codex 0.171 (seen live) writes no event_msg user_message/agent_message: only response_item messages, with
+    its own instructions as developer messages and AGENTS.md as a user message."""
+    t0 = time.time()
+    rows = [
+        {"timestamp": iso(t0), "type": "session_meta", "payload": {"id": "x"}},
+        {"timestamp": iso(t0), "type": "response_item", "payload": {"type": "message", "role": "developer", "content": [
+            {"type": "input_text", "text": "You are Codex, an agent based on GPT-6."}]}},
+        {"timestamp": iso(t0), "type": "response_item", "payload": {"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": "# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>...</INSTRUCTIONS>"},
+            {"type": "input_text", "text": "<environment_context><cwd>/repo</cwd></environment_context>"}]}},
+        {"timestamp": iso(t0 + 1), "type": "response_item", "payload": {"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": "add a docstring and run the tests"}]}},
+        {"timestamp": iso(t0 + 2), "type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec", "input": "..."}},
+        {"timestamp": iso(t0 + 3), "type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "AgentMessage"}}},
+        {"timestamp": iso(t0 + 4), "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [
+            {"type": "output_text", "text": "Added the docstring to `to_regex`."}]}},
+    ]
+    f = tmp_path / "rollout-2026-11-19T20-14-37-x.jsonl"
+    f.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    got = [(m["role"], m["text"]) for m in conversations.messages(str(f), "codex")]
+    assert got == [("user", "add a docstring and run the tests"), ("agent", "Added the docstring to `to_regex`.")]
+
+
+def test_being_on_a_branch_is_not_working_on_it(env):
+    """Seen live: a Codex session that only edited a file, on a branch another agent had opened a PR from,
+    was listed under that PR."""
+    repo = env["repo"]
+    cli.main(["init", "--yes"])
+    git(repo, "checkout", "-q", "-b", "fix/other-work")
+    pr = {"number": 9, "url": "https://github.com/acme/api/pull/9", "state": "open", "head": "fix/other-work",
+          "created": time.time() - 3600, "commits": []}
+    base = {"session_id": "idle", "cwd": str(repo)}
+    run_hook({**base, "hook_event_name": "SessionStart"}, "codex")
+    run_hook({**base, "hook_event_name": "PostToolUse", "tool_name": "apply_patch",
+              "tool_input": {"command": "*** Begin Patch\n*** Update File: a.py\n@@\n+x\n*** End Patch\n"},
+              "tool_response": "Success"}, "codex")
+    run_hook({**base, "hook_event_name": "Stop"}, "codex")
+    con = store.connect()
+    row, evs = session(con, "idle")
+    assert prs.link(SLUG, "idle", evs, row["started"], [pr], repo) == (None, "")
+    # The same session pushing the branch is working on it.
+    run_hook({**base, "hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": "git push -u origin HEAD"},
+              "tool_response": "Exit code: 0\nOutput:\n"}, "codex")
+    row, evs = session(con, "idle")
+    assert prs.link(SLUG, "idle", evs, row["started"], [pr], repo)[1] == "branch"

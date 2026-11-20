@@ -96,7 +96,8 @@ in one of these ways, strongest first, and the page says which:
 
 1. **by hand**: you linked it on the session page;
 2. **gh pr create**: the agent created the PR and its output printed the link;
-3. **branch**: the session worked on the PR's branch;
+3. **branch**: the session worked on the PR's branch (committed or pushed there, or switched to it), not merely
+   ran while it was checked out;
 4. **commit**: a commit made during the session is in the PR;
 5. **tool output**: the agent printed a link to the PR some other way.
 
