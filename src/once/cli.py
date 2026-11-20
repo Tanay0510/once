@@ -1499,9 +1499,12 @@ def cmd_lab_exp(a):
         _say(f"Experiment on {slug}: {len(ts)} {a.split} tasks x {len(arms)} arms ({', '.join(arms)}) x {a.repeats} repeats = {total} runs")
         _say(f"  Model     {a.model or 'your Claude Code default'}")
         _say(f"  Spend     up to ${a.budget:.2f} per run, stopping at ${cap:.2f} in total")
-        if "rules" in arms:
+        if any(x in arms for x in ("rules", "unreviewed", "rules+native")):
             n = len(rules.active(slug))
             _say(f"  Rules     {n} active. For a fair test they must come from train tasks only, never from held-out ones.")
+        if "unreviewed" in arms:
+            n = sum(1 for r in rules.load_all(slug) if r.get("status") == "candidate")
+            _say(f"  Unreviewed  the active rules plus {n} suggestion{'s' if n != 1 else ''} still waiting for review")
         if a.split != "heldout":
             _say("  Note      this is not the held-out split, so it measures fit, not generalization.")
         _say("\nArms are shuffled within each task. Runs work in throwaway copies. Not a container. Resumable.")
@@ -1704,6 +1707,12 @@ def cmd_config(a):
              "notifications": "desktop notification when rules are waiting or the digest is ready (default on)",
              "digest": "weekly | off: a summary of the week, to a file, a notification and Slack (default weekly)",
              "slack_webhook": "Slack incoming-webhook address for the weekly digest (default none)",
+             "digest_email": "address the weekly digest is emailed to (needs smtp_host; default none)",
+             "smtp_host": "mail server for the digest, e.g. smtp.gmail.com (port 465: SSL, else STARTTLS)",
+             "smtp_port": "mail server port (default 587)",
+             "smtp_user": "mail server login; the password is read from ONCE_SMTP_PASSWORD or smtp_password_cmd",
+             "smtp_password_cmd": "a command that prints the password, e.g. security find-generic-password -s once-smtp -w",
+             "digest_from": "the From address (default smtp_user)",
              "statusline_wrap": "the status line command to run before the `once` line (set by init)"}
     cfg = _cfg()
     if not a.key:
@@ -2058,8 +2067,9 @@ def cmd_digest(a):
             _say(f"\nSent to: {', '.join(went)}")
         return 0
     _say(text)
-    if not ambient.config().get("slack_webhook"):
-        _say(f"\nTo get this in Slack every week:  {BIN} config slack_webhook https://hooks.slack.com/services/...")
+    if not ambient.config().get("slack_webhook") and not ambient.config().get("digest_email"):
+        _say(f"\nTo get this in Slack every week:  {BIN} config slack_webhook https://hooks.slack.com/services/..."
+             f"\nOr by email:                     {BIN} config digest_email you@example.com  (and smtp_host, smtp_user)")
     return 0
 
 
@@ -2288,7 +2298,8 @@ def cmd_complete(a):
         out = ["tasks", "run", "sweep", "replay", "exp", "regress", "cochange", "stats", "bootstrap", "meta", "cost"]
     elif cmd == "config":
         out = ["auto_learn", "daily_cost_cap", "quiet", "snapshots", "holdout_fraction", "teach_by_talking",
-               "ask_in_agent", "notifications", "digest", "slack_webhook"]
+               "ask_in_agent", "notifications", "digest", "slack_webhook", "digest_email", "smtp_host", "smtp_port",
+               "smtp_user", "smtp_password_cmd", "digest_from"]
     elif cmd in subs.choices:
         sp = subs.choices[cmd]
         out = [o for act in sp._actions for o in act.option_strings if o.startswith("--")]
@@ -2389,7 +2400,7 @@ def build_parser():
     s.add_argument("--model", help="model for headless runs, e.g. a cheaper one to control spend")
     s.add_argument("--limit", type=int, default=60, help="how many merged PRs to mine, or tasks to validate")
     s.add_argument("--with-rules", action="store_true", help="lab run: give the agent your active rules")
-    s.add_argument("--arms", help="comma-separated arms: bare,rules,generated,native")
+    s.add_argument("--arms", help="comma-separated arms: bare,rules,generated,native,unreviewed,rules+native")
     s.add_argument("--repeats", type=int, default=3)
     s.add_argument("--split", default=None, choices=["train", "heldout"])
     s.add_argument("--max-cost", type=float, help="stop the whole sweep or experiment at this spend")

@@ -321,3 +321,24 @@ def test_an_old_collector_database_gains_the_new_columns(tmp_path):
     collector.ingest(c, {"developer": "bo", "sessions": [{"sid": "x", "repo": "r", "agent": "codex", "started": time.time(),
                                                           "pr": {"number": 3, "state": "open", "how": "branch"}}]})
     assert collector.summary(c)["agents"]["codex"]["linked"] == 1
+
+
+def test_a_session_that_created_two_prs_is_listed_under_both(env, tmp_path):
+    repo = env["repo"]
+    cli.main(["init", "--yes"])
+    base = {"session_id": "two", "cwd": str(repo)}
+    run_hook({**base, "hook_event_name": "SessionStart"})
+    run_hook({**base, "hook_event_name": "UserPromptSubmit", "prompt": "ship both fixes"})
+    for n in (6, 7):
+        run_hook({**base, "hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": "gh pr create --fill"},
+                  "tool_response": {"stdout": f"https://github.com/acme/api/pull/{n}\n"}})
+    cache = prs._cache_file(SLUG)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps({"fetched": time.time(), "prs": [
+        {"number": 6, "url": "https://github.com/acme/api/pull/6", "title": "First", "state": "merged", "commits": []},
+        {"number": 7, "url": "https://github.com/acme/api/pull/7", "title": "Second", "state": "open", "commits": []}]}))
+    con = store.connect()
+    store.sync(con)
+    page = ui.view_prs(con, SLUG)
+    assert "First" in page and "Second" in page and "1 of 1 session linked" in page
+    assert "#7 open" in ui.view_conversations(con, SLUG, "two")  # one chip: the latest

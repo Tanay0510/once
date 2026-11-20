@@ -1083,8 +1083,9 @@ def _length(r) -> str:
     return f"{m // 60}h {m % 60}m" if m >= 60 else f"{max(m, 1)}m"
 
 
-def _pr_links(con, rows, commits: bool = True):
-    """[(row, events, pr or None, how)] for these sessions, from the cache only: GitHub is never waited on."""
+def _pr_links(con, rows, commits: bool = True, every: bool = False):
+    """[(row, events, pr or None, how)] for these sessions, from the cache only: GitHub is never waited on.
+    every: one entry per PR when a session created several (the PR page); else the latest (one chip)."""
     slugs = sorted({r["repo"] for r in rows if r["repo"]})
     cache = {s: prs.cached(s)[0] for s in slugs}
     roots = {}
@@ -1096,10 +1097,14 @@ def _pr_links(con, rows, commits: bool = True):
     for r in rows:
         evs = store.events(con, r["id"])
         try:
-            pr, how = prs.link(r["repo"] or "", r["id"], evs, r["started"], cache.get(r["repo"], []), roots.get(r["repo"]), hand)
+            found = prs.links(r["repo"] or "", r["id"], evs, r["started"], cache.get(r["repo"], []), roots.get(r["repo"]), hand)
         except Exception:
-            pr, how = None, ""
-        out.append((r, evs, pr, how))
+            found = []
+        if every and found:
+            out += [(r, evs, pr, how) for pr, how in found]
+        else:
+            pr, how = found[-1] if found else (None, "")
+            out.append((r, evs, pr, how))
     return out
 
 
@@ -1124,7 +1129,7 @@ def view_prs(con, repo, state: str | None = None, msg: str | None = None):
     slugs = sorted({r["repo"] for r in rows if r["repo"]})
     for s in slugs:
         prs.refresh_async(s)
-    linked = _pr_links(con, rows)
+    linked = _pr_links(con, rows, every=True)
     groups: dict = {}
     loose = []
     for r, evs, pr, how in linked:
@@ -1138,7 +1143,7 @@ def view_prs(con, repo, state: str | None = None, msg: str | None = None):
     count = lambda st: sum(1 for g in allg if g["pr"].get("state") == st)
     shown = [g for g in allg if not state or g["pr"].get("state") == state]
     flagged_merged = sum(r["flags"] or 0 for g in allg if g["pr"].get("state") == "merged" for r, _ in g["sessions"])
-    n_linked = sum(len(g["sessions"]) for g in allg)
+    n_linked = len({r["id"] for g in allg for r, _ in g["sessions"]})  # a session can sit under several PRs
 
     gh = prs.gh_available()
     fetched = [prs.cached(s)[1] for s in slugs if s.startswith("github.com/")]
@@ -1158,9 +1163,13 @@ def view_prs(con, repo, state: str | None = None, msg: str | None = None):
              f'<div class="tile"><span>Sessions linked to a PR</span><b>{n_linked} of {len(rows)}</b></div>'
              f'<div class="tile"><span>Flagged steps behind merged PRs</span><b class="{"rose" if flagged_merged else ""}">{flagged_merged}</b></div></div>')
     from .collector import shipping
+    one = {}  # one row per session for the comparison: a merged PR counts over an open one
+    for r, evs, pr, _ in linked:
+        if r["id"] not in one or (pr and pr.get("state") == "merged"):
+            one[r["id"]] = (r, evs, pr)
     ship = shipping([{"rules_given": sorted({i for ev in evs if ev.get("event") == "rule_injected" for i in ev.get("rule_ids", [])}),
                       "held_out": r["held_out"], "steps": r["steps"],
-                      "pr": {"state": pr.get("state")} if pr else None} for r, evs, pr, _ in linked])
+                      "pr": {"state": pr.get("state")} if pr else None} for r, evs, pr in one.values()])
     ship_html = ""
     if len(ship) == 2 and any(v["merged"] for v in ship.values()):
         pct = lambda v: "–" if v is None else f"{100 * v:.0f}%"

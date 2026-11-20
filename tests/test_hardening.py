@@ -209,3 +209,50 @@ def test_an_old_index_is_rebuilt_with_the_new_keys(env):
     con = store.connect()
     store.sync(con)
     assert store.sessions(con, SLUG)[0]["steps"] > 5 and store.last_action(con)["kind"] == "teach"
+
+
+def test_digest_email(env, monkeypatch):
+    from once import ambient
+    cli.main(["init", "--yes"])
+    sent = []
+
+    class FakeSMTP:
+        def __init__(self, host, port):
+            self.host, self.port = host, port
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def login(self, u, p):
+            sent.append(("login", u, p))
+        def send_message(self, m):
+            sent.append(("msg", m["To"], m["Subject"], m.get_content()))
+    assert ambient.email_digest("hi") == "email skipped: set smtp_host"
+    for k, v in (("digest_email", "me@example.com"), ("smtp_host", "smtp.example.com"), ("smtp_user", "me@example.com")):
+        assert cli.main(["config", k, v]) == 0
+    assert "no password" in ambient.email_digest("hi", FakeSMTP)
+    monkeypatch.setenv("ONCE_SMTP_PASSWORD", "pw")
+    assert ambient.email_digest("week text", FakeSMTP) == "email to me@example.com"
+    assert sent[0] == ("login", "me@example.com", "pw") and sent[1][1] == "me@example.com" and "week text" in sent[1][3]
+    assert "pw" not in json.dumps(ambient.config())  # the password is never written to the config
+    monkeypatch.setattr(ambient, "email_digest", lambda t: "email to me@example.com")
+    assert "email to me@example.com" in ambient.send_digest("x\n\n- y")
+
+
+def test_unreviewed_and_rules_plus_native_arms(env):
+    from once import experiment, rules as rules_
+    cli.main(["init", "--yes"])
+    cli.main(["teach", "always run cargo fmt before finishing"])
+    cand = rules_.new_manual("never commit generated protobuf files", [], "test")
+    cand["status"] = "candidate"
+    rules_.save(SLUG, cand)
+    ids = lambda arm: sorted(x["id"] for x in experiment.arm_setup(SLUG, arm)["entries"] or [])
+    assert len(ids("rules")) == 1 and len(ids("unreviewed")) == 2 and cand["id"] in ids("unreviewed")
+    import pytest
+    with pytest.raises(ValueError, match="native baseline"):
+        experiment.arm_setup(SLUG, "rules+native")
+    d = experiment.baseline_dir(SLUG) / "native-frozen"
+    d.mkdir(parents=True)
+    (d / "MEMORY.md").write_text("x")
+    both = experiment.arm_setup(SLUG, "rules+native")
+    assert both["auto_memory"] and len(both["entries"]) == 1 and "autoMemoryDirectory" in both["extra_argv"][1]

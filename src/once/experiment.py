@@ -5,6 +5,8 @@ Arms:
   rules      bare plus your active rules
   generated  bare plus an instruction file the agent wrote for itself at the training cutoff
   native     bare plus the agent's built-in memory, built on the train tasks and then frozen (experimental)
+  unreviewed bare plus your active rules and every suggestion still waiting for review: is review worth it?
+  rules+native  rules and the frozen native memory together: do they add up, or overlap?
 """
 import hashlib
 import json
@@ -19,7 +21,7 @@ from pathlib import Path
 
 from . import SCHEMA, __version__, paths, replay, rules, tasks
 
-ARMS = ("bare", "rules", "generated", "native")
+ARMS = ("bare", "rules", "generated", "native", "unreviewed", "rules+native")
 GEN_PROMPT = ("Study this repository and write a CLAUDE.md at the repository root for future coding sessions here. "
               "Cover how to run the tests, the layout, and the conventions a contributor must follow. Be concise.")
 
@@ -70,6 +72,12 @@ def arm_setup(slug: str, arm: str) -> dict:
         if not f.exists():
             raise ValueError("the generated baseline is not prepared; run: once lab exp baseline generated")
         return {"entries": None, "extra_files": {"CLAUDE.md": f.read_text()}}
+    if arm == "unreviewed":
+        pool = [r for r in rules.load_all(slug) if r.get("status") in ("active", "candidate")]
+        return {"entries": [replay.index_entry(r) for r in pool] or None}
+    if arm == "rules+native":
+        nat = arm_setup(slug, "native")
+        return {**nat, "entries": arm_setup(slug, "rules")["entries"]}
     if arm == "native":
         d = baseline_dir(slug) / "native-frozen"
         if not d.is_dir():

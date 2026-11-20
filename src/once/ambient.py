@@ -448,6 +448,61 @@ def digest_due(days: int = 7) -> bool:
     return time.time() - last >= days * 86400
 
 
+def _smtp_password(c: dict) -> str | None:
+    """Never stored in once's config: from the environment, or a command such as the macOS keychain."""
+    if os.environ.get("ONCE_SMTP_PASSWORD"):
+        return os.environ["ONCE_SMTP_PASSWORD"]
+    cmd = c.get("smtp_password_cmd")
+    if cmd:
+        import shlex
+        import subprocess
+        try:
+            r = subprocess.run(shlex.split(cmd), capture_output=True, text=True, timeout=10)
+            return r.stdout.strip() if r.returncode == 0 else None
+        except Exception:
+            return None
+    return None
+
+
+def email_digest(text: str, smtp_factory=None) -> str:
+    """Email the digest as plain text. Returns where it went, or why it did not go."""
+    import smtplib
+    import ssl
+    from email.message import EmailMessage
+    c = config()
+    to, host = c.get("digest_email"), c.get("smtp_host")
+    if not host:
+        return "email skipped: set smtp_host"
+    port = int(c.get("smtp_port") or 587)
+    user = c.get("smtp_user")
+    msg = EmailMessage()
+    msg["Subject"] = "once: your weekly digest"
+    msg["From"] = c.get("digest_from") or user or f"once@{host}"
+    msg["To"] = to
+    msg.set_content(text + "\n")
+    try:
+        if smtp_factory:
+            srv = smtp_factory(host, port)
+        elif port == 465:
+            srv = smtplib.SMTP_SSL(host, port, timeout=20, context=ssl.create_default_context())
+        else:
+            srv = smtplib.SMTP(host, port, timeout=20)
+            srv.ehlo()
+            if srv.has_extn("starttls"):
+                srv.starttls(context=ssl.create_default_context())
+                srv.ehlo()
+        with srv:
+            if user:
+                pw = _smtp_password(c)
+                if pw is None:
+                    return "email failed: no password (set ONCE_SMTP_PASSWORD or smtp_password_cmd)"
+                srv.login(user, pw)
+            srv.send_message(msg)
+        return f"email to {to}"
+    except Exception as e:
+        return f"email failed: {type(e).__name__}: {str(e)[:120]}"
+
+
 def send_digest(text: str) -> list[str]:
     """Write the digest to a file, post it to Slack if a webhook is set, and notify. Returns where it went."""
     went = []
@@ -466,6 +521,8 @@ def send_digest(text: str) -> list[str]:
             went.append("Slack")
         except Exception as e:
             went.append(f"Slack failed: {type(e).__name__}")
+    if config().get("digest_email"):
+        went.append(email_digest(text))
     first = next((l for l in text.splitlines()[2:] if l.strip()), "")
     if notify("once: weekly digest", first.lstrip("- "), f"file://{f}"):
         went.append("notification")
