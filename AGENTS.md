@@ -44,8 +44,10 @@ after a bad edit, an error the agent must fix, or a refusal before the edit land
 Everything is local-first. Sessions, rules and the dashboard live on the developer's machine. An optional
 **team collector** receives counts and outcomes, never prompts, code or text.
 
-It is a Python 3.10+ CLI with one dependency (`pyyaml`), packaged with hatchling, run with `uv`. Version 0.8.1.
-The GitHub repo is private: `Tanay0510/once`. No license yet.
+It is a Python 3.10+ CLI with one dependency (`pyyaml`), packaged with hatchling, run with `uv`, published on PyPI
+as `once`. Version 0.9.0. GitHub: `Tanay0510/once`. License: Business Source License 1.1 (`LICENSE`): free to use,
+including at work, except in a competing commercial offering; each version becomes Apache-2.0 four years after it
+is published. Don't change the license text or add code under another license without the owner.
 
 ### The loop
 
@@ -288,7 +290,9 @@ uv run once demo              # the loop end to end in a few seconds, no model c
 - **Releasing:** bump the three version strings, `uv lock`, merge, then tag `vX.Y.Z` on `main`. `release.yml`
   checks that the tag matches, runs the tests, builds, makes the GitHub release and the collector image, and
   publishes to PyPI only when the repo variable `PUBLISH_PYPI` is `true`.
-- **Docs:** `README.md` is the release history and details. `docs/guide.md` is the user guide. Update both
+- **Docs:** `README.md` is the short introduction that PyPI shows too: keep its links and images absolute
+  (github.com / raw.githubusercontent.com URLs). `CHANGELOG.md` is the release history and details: add a section
+  for every version. `docs/guide.md` is the user guide. Update both
   when user-facing behaviour changes, and keep "Known gaps" honest about what was verified live and what was
   only tested with stand-ins. Screenshots in `docs/img/` must come from sample data, never a real user's
   sessions.
