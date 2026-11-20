@@ -235,6 +235,10 @@ def post_comment(root, pr: str, body: str) -> tuple[bool, str]:
     tool = gh()
     if not tool:
         return False, "gh is not installed"
-    r = subprocess.run([tool, "pr", "comment", str(pr), "--body-file", "-"], cwd=str(root), input=body,
-                       capture_output=True, text=True, timeout=60)
+    # Update the comment from an earlier run instead of adding one per push (gh 2.58+); older gh adds a new one.
+    run = lambda extra: subprocess.run([tool, "pr", "comment", str(pr), "--body-file", "-", *extra], cwd=str(root),
+                                       input=body, capture_output=True, text=True, timeout=60)
+    r = run(["--edit-last", "--create-if-none"])
+    if r.returncode != 0 and ("unknown flag" in r.stderr or "no comments found" in r.stderr.lower()):
+        r = run([])
     return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]

@@ -149,6 +149,24 @@ tasks need in its settings, for example `{"permissions": {"allow": ["command(pyt
   sent in the background. The team page shows each agent and each developer, where agents struggle, rules across
   the team, how suggestions fare, how many sessions led to a merged PR, and whether rules help ship.
 - `once collector push --dry-run` prints exactly what would be sent.
+- **Pull request check in CI.** `once pr-check <number>` lists files a pull request probably missed (files that
+  usually change together with the ones it touches, from the repo's history) and the rules for the files it
+  touches, including rules committed to `.once/rules/`. As a GitHub Action:
+
+  ```yaml
+  on: pull_request
+  permissions: {contents: read, pull-requests: write}
+  jobs:
+    once:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+          with: {fetch-depth: 0}          # it reads history
+        - uses: Tanay0510/once@v0.8.1     # posts one comment and updates it on each push
+  ```
+
+  While the once repository is private, other repositories cannot use the action; it runs on once's own pull
+  requests (`.github/workflows/pr-check.yml`).
 
 ## Privacy
 

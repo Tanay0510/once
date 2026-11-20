@@ -2115,6 +2115,10 @@ def cmd_pr_check(a):
     if not root:
         _say("Run this from inside a git repo.")
         return 1
+    if not index.load(slug).get("rules"):
+        # A fresh machine (CI, say) has no index yet: build it, so the rules committed to the repo count.
+        repo.remember_root(slug, root)
+        rules.compile_index(slug)
     res = team.pr_check(slug, root, a.pr)
     if a.json:
         print(json.dumps(res))

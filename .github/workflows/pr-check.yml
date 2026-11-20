@@ -1,0 +1,24 @@
+name: once pr-check
+
+# once checking its own pull requests, with the code in the pull request. Other repositories use the action
+# (action.yml at the root of this repository); see docs/guide.md.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  pr-check:
+    runs-on: ubuntu-latest
+    # A pull request from a fork gets a read-only token; the check then only writes the job summary.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git fetch -q origin "${{ github.base_ref }}"
+      - uses: ./
+        with:
+          install: "."
+          post: ${{ github.event.pull_request.head.repo.full_name == github.repository }}

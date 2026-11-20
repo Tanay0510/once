@@ -273,6 +273,8 @@ def remote_repo(tmp_path, monkeypatch):
     monkeypatch.setenv("ONCE_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("ONCE_OLD_HOME", str(tmp_path / "no-old-install"))
     monkeypatch.setenv("ONCE_CLAUDE_SETTINGS", str(tmp_path / "claude" / "settings.json"))
+    monkeypatch.setenv("ONCE_AGY_HOOKS", str(tmp_path / "gemini" / "config" / "hooks.json"))  # never the real agents' config
+    monkeypatch.setenv("ONCE_CODEX_HOOKS", str(tmp_path / "codex" / "hooks.json"))
     monkeypatch.chdir(work)
     fake_gh = tmp_path / "gh"
     fake_gh.write_text(f"#!{sys.executable}\nimport sys, json\nopen({str(tmp_path / 'gh.log')!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
@@ -358,3 +360,24 @@ def test_ui_detach_starts_once(env, monkeypatch):
         assert ambient.ensure_ui(port) == url
     finally:
         subprocess.run(["pkill", "-f", f"ui --no-open --port {port}"], check=False)
+
+
+def test_pr_check_on_a_fresh_machine_uses_the_rules_committed_to_the_repo(remote_repo, capsys, monkeypatch, tmp_path):
+    """What the GitHub Action does: no once init, no local index; only the repo and its .once/rules/."""
+    work = remote_repo["work"]
+    cli.main(["init", "--yes"])
+    cli.main(["teach", "--path", "src/**", "keep public functions typed"])
+    rule = next((paths.memory()).rglob("rules/*.yaml"))
+    (work / ".once" / "rules").mkdir(parents=True, exist_ok=True)
+    (work / ".once" / "rules" / rule.name).write_text(rule.read_text())
+    subprocess.run(["git", "-C", str(work), "checkout", "-q", "-b", "feature2"], check=True)
+    (work / "src" / "a.py").write_text("x = 7\n")
+    subprocess.run(["git", "-C", str(work), *GIT, "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(work), *GIT, "commit", "-qm", "a and team rule"], check=True)
+    monkeypatch.setenv("ONCE_HOME", str(tmp_path / "ci-home"))  # a CI runner: nothing local
+    capsys.readouterr()
+    assert cli.main(["pr-check"]) == 0
+    assert "keep public functions typed" in capsys.readouterr().out
+    assert cli.main(["pr-check", "8", "--post"]) == 0
+    calls = [json.loads(l) for l in remote_repo["gh_log"].read_text().splitlines()]
+    assert any(c[:3] == ["pr", "comment", "7"] and "--edit-last" in c for c in calls)  # one comment, updated

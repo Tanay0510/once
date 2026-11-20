@@ -1,0 +1,40 @@
+name: once pr-check
+description: >-
+  Lists files a pull request probably missed (from the repository's own history) and the once rules that apply
+  to the files it touches. Reads git history only; no code leaves the repository.
+branding:
+  icon: check-circle
+  color: orange
+
+inputs:
+  install:
+    description: >-
+      What to install once from: a pip requirement. The default installs the release this action is tagged
+      with, from this repository.
+    default: "git+https://github.com/Tanay0510/once@${{ github.action_ref }}"
+  post:
+    description: "true: post the result as a pull request comment, updated on each push. false: job summary only."
+    default: "true"
+  token:
+    description: Token for reading the pull request and commenting. Needs pull-requests write to post.
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v5
+    - name: Install once
+      shell: bash
+      run: uv tool install --quiet "${{ inputs.install }}"
+    - name: Check the pull request
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        if [ -z "$PR" ]; then echo "Run this on pull_request events."; exit 0; fi
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          echo "::warning::once pr-check needs history: use actions/checkout with fetch-depth: 0"
+        fi
+        once pr-check "$PR" >> "$GITHUB_STEP_SUMMARY" || true
+        if [ "${{ inputs.post }}" = "true" ]; then once pr-check "$PR" --post || echo "::warning::could not post the comment"; fi

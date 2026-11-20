@@ -1356,7 +1356,8 @@ def _conversation(con, r, link=None) -> str:
                       'so only your prompts and the steps are shown.</p>')
     if not out:
         out = ['<div class="empty" style="padding:0">Nothing was said in this session.</div>']
-    title = detectors._short(r["prompt"], 140) or "No prompt"
+    first = next((it["text"] for it in items if it["kind"] == "user"), None) if have else None
+    title = detectors._short(first or r["prompt"], 140) or "No prompt"  # the transcript is masked freshly
     md = conversations.as_markdown(items, title)
     meta = [r["agent"] or "", r["model"] or "", plural(conversations.turns(evs), "turn"), plural(r["steps"] or 0, "step"),
             _length(r), _cost(evs, r["model"]), _branch(evs), r["repo"] or ""]
